@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ticketera</title>
+<style>
+  :root { --bg:#f6f7fb; --card:#fff; --text:#1c1e26; --muted:#6b7080; --accent:#5b4cf0; --border:#e4e6ee; --ok:#1a8a4a; --err:#c62f3b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14151b; --card:#1d1f28; --text:#eceef5; --muted:#9a9fb2; --accent:#8b7fff; --border:#2c2f3b; --ok:#4cc982; --err:#ff6b76; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px; background:var(--card); border-bottom:1px solid var(--border); flex-wrap:wrap; }
+  header h1 { margin:0; font-size:1.25rem; color:var(--accent); }
+  nav { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  main { max-width:960px; margin:0 auto; padding:16px; }
+  button { font:inherit; padding:8px 14px; border-radius:8px; border:1px solid var(--accent); background:var(--accent); color:#fff; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--accent); }
+  button:disabled { opacity:.5; cursor:default; }
+  input, textarea { font:inherit; width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); }
+  label { display:block; font-size:.85rem; color:var(--muted); margin:10px 0 4px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:14px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; }
+  .card h3 { margin:0 0 6px; }
+  .muted { color:var(--muted); font-size:.9rem; }
+  .price { font-weight:700; color:var(--accent); margin:8px 0; }
+  .msg { padding:10px 12px; border-radius:8px; margin-bottom:12px; font-size:.9rem; }
+  .msg.ok { background:color-mix(in srgb,var(--ok) 15%,transparent); color:var(--ok); }
+  .msg.err { background:color-mix(in srgb,var(--err) 15%,transparent); color:var(--err); }
+  .row { display:flex; gap:8px; }
+  .row > * { flex:1; }
+  .ticket { text-align:center; }
+  .code { font-family:monospace; font-size:.7rem; word-break:break-all; color:var(--muted); }
+  h2 { margin-top:0; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎟️ Ticketera</h1>
+  <nav id="nav"></nav>
+</header>
+<main>
+  <div id="msg"></div>
+  <div id="view"></div>
+</main>
+
+<script>
+const API = (localStorage.getItem('ticketera_api') || 'http://localhost:5000') + '/api';
+const state = { token: localStorage.getItem('token'), user: JSON.parse(localStorage.getItem('user') || 'null') };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = (n) => '$' + Number(n).toLocaleString('es-AR');
+
+function flash(text, type = 'ok') {
+  $('msg').innerHTML = text ? `<div class="msg ${type}">${esc(text)}</div>` : '';
+  if (text) window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function api(path, { method = 'GET', body, auth = false } = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (auth && state.token) headers.Authorization = 'Bearer ' + state.token;
+  let res;
+  try { res = await fetch(API + path, { method, headers, body: body ? JSON.stringify(body) : undefined }); }
+  catch { throw new Error('No se pudo conectar con el backend (' + API + ')'); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.success === false) throw new Error(data.message || 'Error ' + res.status);
+  return data;
+}
+
+function setSession(token, user) {
+  state.token = token; state.user = user;
+  if (token) { localStorage.setItem('token', token); localStorage.setItem('user', JSON.stringify(user)); }
+  else { localStorage.removeItem('token'); localStorage.removeItem('user'); }
+  renderNav();
+}
+
+function renderNav() {
+  $('nav').innerHTML = state.user
+    ? `<span class="muted">Hola, ${esc(state.user.name)}</span>
+       <button class="ghost" onclick="go('events')">Eventos</button>
+       <button class="ghost" onclick="go('new')">Crear evento</button>
+       <button class="ghost" onclick="go('validate')">Validar QR</button>
+       <button onclick="logout()">Salir</button>`
+    : `<button class="ghost" onclick="go('events')">Eventos</button>
+       <button onclick="go('login')">Ingresar</button>`;
+}
+
+function logout() { setSession(null, null); go('events'); }
+
+function go(view, arg) {
+  flash('');
+  ({ events: viewEvents, login: viewLogin, new: viewNew, buy: viewBuy, validate: viewValidate }[view])(arg);
+}
+
+// ---------- Eventos ----------
+async function viewEvents() {
+  $('view').innerHTML = '<p class="muted">Cargando…</p>';
+  try {
+    const { events } = await api('/events');
+    $('view').innerHTML = `<h2>Próximos eventos</h2>` + (events.length
+      ? `<div class="grid">${events.map(e => `
+        <div class="card">
+          <h3>${esc(e.title)}</h3>
+          <div class="muted">📅 ${new Date(e.date).toLocaleString('es-AR')}<br>📍 ${esc(e.location)}</div>
+          <p>${esc(e.description)}</p>
+          <div class="price">${money(e.ticketPrice)}</div>
+          <div class="muted">${e.ticketsAvailable} disponibles</div>
+          <p><button ${e.ticketsAvailable < 1 ? 'disabled' : ''} onclick="go('buy','${e.id}')">${e.ticketsAvailable < 1 ? 'Agotado' : 'Comprar'}</button></p>
+        </div>`).join('')}</div>`
+      : '<p class="muted">Todavía no hay eventos. Ingresá y creá el primero.</p>');
+  } catch (err) { $('view').innerHTML = ''; flash(err.message, 'err'); }
+}
+
+// ---------- Login / registro ----------
+function viewLogin() {
+  $('view').innerHTML = `
+  <div class="card" style="max-width:380px;margin:auto">
+    <h2 id="authTitle">Ingresar</h2>
+    <form onsubmit="submitAuth(event)">
+      <div id="nameBox" class="hidden"><label>Nombre</label><input id="aName"></div>
+      <label>Email</label><input id="aEmail" type="email" required>
+      <label>Contraseña</label><input id="aPass" type="password" required minlength="6">
+      <p><button id="authBtn">Ingresar</button></p>
+    </form>
+    <p class="muted"><a href="#" onclick="toggleAuth();return false" id="toggleLink">¿No tenés cuenta? Registrate</a></p>
+  </div>`;
+}
+let registering = false;
+function toggleAuth() {
+  registering = !registering;
+  $('nameBox').classList.toggle('hidden', !registering);
+  $('authTitle').textContent = $('authBtn').textContent = registering ? 'Registrarme' : 'Ingresar';
+  $('toggleLink').textContent = registering ? 'Ya tengo cuenta' : '¿No tenés cuenta? Registrate';
+}
+async function submitAuth(ev) {
+  ev.preventDefault();
+  try {
+    const body = { email: $('aEmail').value, password: $('aPass').value };
+    if (registering) body.name = $('aName').value;
+    const { token, user } = await api(registering ? '/auth/register' : '/auth/login', { method: 'POST', body });
+    setSession(token, user);
+    go('events');
+    flash('Sesión iniciada');
+  } catch (err) { flash(err.message, 'err'); }
+}
+
+// ---------- Crear evento ----------
+function viewNew() {
+  if (!state.user) return go('login');
+  $('view').innerHTML = `
+  <div class="card" style="max-width:520px;margin:auto">
+    <h2>Crear evento</h2>
+    <form onsubmit="submitEvent(event)">
+      <label>Título</label><input id="eTitle" required>
+      <label>Descripción</label><textarea id="eDesc" rows="3" required></textarea>
+      <div class="row">
+        <div><label>Fecha y hora</label><input id="eDate" type="datetime-local" required></div>
+        <div><label>Lugar</label><input id="eLoc" required></div>
+      </div>
+      <div class="row">
+        <div><label>Precio</label><input id="ePrice" type="number" min="0" step="0.01" required></div>
+        <div><label>Entradas</label><input id="eStock" type="number" min="1" required></div>
+      </div>
+      <p><button>Publicar</button></p>
+    </form>
+  </div>`;
+}
+async function submitEvent(ev) {
+  ev.preventDefault();
+  try {
+    await api('/events', { method: 'POST', auth: true, body: {
+      title: $('eTitle').value, description: $('eDesc').value,
+      date: new Date($('eDate').value).toISOString(), location: $('eLoc').value,
+      ticketPrice: Number($('ePrice').value), ticketsAvailable: Number($('eStock').value),
+    }});
+    go('events');
+    flash('Evento creado');
+  } catch (err) { flash(err.message, 'err'); }
+}
+
+// ---------- Compra ----------
+let currentEvent = null;
+async function viewBuy(id) {
+  try {
+    ({ event: currentEvent } = await api('/events/' + id));
+  } catch (err) { return flash(err.message, 'err'); }
+  const e = currentEvent;
+  $('view').innerHTML = `
+  <div class="card" style="max-width:480px;margin:auto">
+    <h2>${esc(e.title)}</h2>
+    <p class="muted">📅 ${new Date(e.date).toLocaleString('es-AR')} · 📍 ${esc(e.location)}</p>
+    <form onsubmit="submitBuy(event)">
+      <label>Nombre</label><input id="bName" value="${esc(state.user?.name)}" required>
+      <label>Email</label><input id="bEmail" type="email" value="${esc(state.user?.email)}" required>
+      <label>Cantidad (máx. ${e.ticketsAvailable})</label>
+      <input id="bQty" type="number" min="1" max="${e.ticketsAvailable}" value="1" required oninput="updTotal()">
+      <p class="price" id="bTotal">${money(e.ticketPrice)}</p>
+      <p><button>Pagar</button> <button type="button" class="ghost" onclick="go('events')">Volver</button></p>
+      <p class="muted">El pago es simulado: se aprueba automáticamente.</p>
+    </form>
+  </div>`;
+}
+function updTotal() { $('bTotal').textContent = money(currentEvent.ticketPrice * (Number($('bQty').value) || 0)); }
+
+async function submitBuy(ev) {
+  ev.preventDefault();
+  try {
+    const { purchase } = await api('/purchases/checkout', { method: 'POST', body: {
+      eventId: currentEvent.id, buyerName: $('bName').value,
+      buyerEmail: $('bEmail').value, quantity: Number($('bQty').value),
+    }});
+    // Simula la pasarela de pago confirmando el cobro
+    await api('/purchases/webhook', { method: 'POST', body: { paymentGatewayId: purchase.paymentGatewayId, status: 'approved' } });
+    showTicket(purchase);
+  } catch (err) { flash(err.message, 'err'); }
+}
+
+function showTicket(p) {
+  $('view').innerHTML = `
+  <div class="card ticket" style="max-width:420px;margin:auto">
+    <h2>¡Compra realizada!</h2>
+    <p class="muted">${esc(currentEvent.title)} · ${p.quantity} entrada(s) · ${money(p.totalPrice)}</p>
+    <p class="muted">El QR de la entrada se envía por email a ${esc(p.buyerEmail)}.</p>
+    <p class="code">Compra ${esc(p.id)}</p>
+    <button onclick="go('events')">Volver a eventos</button>
+  </div>`;
+}
+
+// ---------- Validar QR (organizador) ----------
+function viewValidate() {
+  if (!state.user) return go('login');
+  $('view').innerHTML = `
+  <div class="card" style="max-width:480px;margin:auto">
+    <h2>Validar entrada</h2>
+    <form onsubmit="submitValidate(event)">
+      <label>Código QR</label><input id="vCode" required>
+      <p><button>Validar</button></p>
+    </form>
+  </div>`;
+}
+async function submitValidate(ev) {
+  ev.preventDefault();
+  try {
+    const r = await api('/purchases/validate-qr', { method: 'POST', auth: true, body: { qrCode: $('vCode').value.trim() } });
+    flash(r.message || 'Entrada válida');
+  } catch (err) { flash(err.message, 'err'); }
+}
+
+renderNav();
+go('events');
+</script>
+</body>
+</html>
