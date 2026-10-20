@@ -2,6 +2,7 @@
 process.env.DATABASE_URL = "sqlite::memory:";
 process.env.JWT_SECRET = "test-secret";
 process.env.NODE_ENV = "test";
+process.env.RESEND_API_KEY = ""; // Email inactivo
 
 const { test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
@@ -25,7 +26,9 @@ let baseUrl;
 let event;
 let staffToken;
 let userToken;
+let organizerToken;
 let codes;
+let accessToken;
 
 const api = async (method, path, { token, body } = {}) => {
   const res = await fetch(`${baseUrl}${path}`, {
@@ -54,11 +57,11 @@ const scan = (code) => ({
 before(async () => {
   await sequelize.sync({ force: true });
 
+  // Organizador con rol "user": puede validar solo porque el evento es suyo
   const organizer = await User.create({
     name: "Organizador",
     email: "org@test.com",
     password: "secret",
-    role: "admin",
   });
   const staffUser = await User.create({
     name: "Puerta 1",
@@ -74,6 +77,7 @@ before(async () => {
 
   staffToken = jwt.sign({ id: staffUser.id }, process.env.JWT_SECRET);
   userToken = jwt.sign({ id: normalUser.id }, process.env.JWT_SECRET);
+  organizerToken = jwt.sign({ id: organizer.id }, process.env.JWT_SECRET);
 
   event = await Event.create({
     title: "Fiesta",
@@ -129,6 +133,22 @@ test("el webhook emite una entrada por persona y es idempotente", async () => {
   assert.equal(tickets.length, 3);
   assert.equal(new Set(tickets.map((t) => t.code)).size, 3);
   codes = tickets.map((t) => t.code);
+  accessToken = checkout.body.purchase.accessToken;
+});
+
+test("el link privado de la compra muestra las entradas con su QR", async () => {
+  const res = await api("GET", `/api/purchases/tickets/${accessToken}`);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.event.title, "Fiesta");
+  assert.equal(res.body.tickets.length, 3);
+  assert.deepEqual(
+    res.body.tickets.map((t) => t.code).sort(),
+    [...codes].sort()
+  );
+  assert.ok(res.body.tickets.every((t) => t.qr.startsWith("data:image/png;base64,")));
+
+  const wrong = await api("GET", "/api/purchases/tickets/no-existe");
+  assert.equal(wrong.status, 404);
 });
 
 test("un pago rechazado devuelve el cupo una sola vez", async () => {
@@ -155,7 +175,15 @@ test("un pago rechazado devuelve el cupo una sola vez", async () => {
   assert.equal(await Ticket.count({ where: { purchaseId: purchase.id } }), 0);
 });
 
-test("solo staff o admin pueden sincronizar", async () => {
+test("el organizador del evento puede validar entradas", async () => {
+  const res = await api("POST", `/api/checkin/events/${event.id}/sync`, {
+    token: organizerToken,
+    body: { deviceId: "org", scans: [] },
+  });
+  assert.equal(res.status, 200);
+});
+
+test("solo staff, admin u organizador pueden sincronizar", async () => {
   const res = await api("POST", `/api/checkin/events/${event.id}/sync`, {
     token: userToken,
     body: { deviceId: "x", scans: [] },
@@ -242,6 +270,25 @@ test("datos de sync inválidos se rechazan", async () => {
 
   const badScan = await sync("device-A", [{ id: "1", code: "x" }]);
   assert.equal(badScan.status, 400);
+});
+
+test("el organizador lista las compras con sus entradas", async () => {
+  const res = await api("GET", `/api/purchases/event/${event.id}`, {
+    token: organizerToken,
+  });
+  assert.equal(res.status, 200);
+  const juan = res.body.purchases.find((p) => p.buyerName === "Juan");
+  assert.equal(juan.status, "completed");
+  assert.equal(juan.Tickets.length, 3);
+  assert.equal(juan.Tickets.filter((t) => t.status === "used").length, 2);
+  const ana = res.body.purchases.find((p) => p.buyerName === "Ana");
+  assert.equal(ana.status, "failed");
+  assert.equal(ana.Tickets.length, 0);
+
+  const other = await api("GET", `/api/purchases/event/${event.id}`, {
+    token: userToken,
+  });
+  assert.equal(other.status, 403);
 });
 
 test("las estadísticas reflejan los ingresos", async () => {

@@ -4,10 +4,10 @@ const {
   syncCheckin,
   getCheckinStats,
 } = require("../controllers/checkinController");
-const { protect, staff } = require("../middleware/authMiddleware");
+const { protect } = require("../middleware/authMiddleware");
 
-// Rutas protegidas (solo staff o admin)
-router.post("/events/:eventId/sync", protect, staff, syncCheckin);
-router.get("/events/:eventId/stats", protect, staff, getCheckinStats);
+// Rutas protegidas (staff, admin u organizador del evento; se verifica en el controlador)
+router.post("/events/:eventId/sync", protect, syncCheckin);
+router.get("/events/:eventId/stats", protect, getCheckinStats);
 
 module.exports = router;

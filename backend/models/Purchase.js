@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const { DataTypes } = require("sequelize");
 const { sequelize } = require("../config/database");
 const Event = require("./Event");
@@ -49,6 +50,13 @@ const Purchase = sequelize.define("Purchase", {
   purchaseDate: {
     type: DataTypes.DATE,
     defaultValue: DataTypes.NOW,
+  },
+  // Token privado para el link "ver mis entradas" (no requiere cuenta)
+  accessToken: {
+    type: DataTypes.STRING(64),
+    allowNull: false,
+    unique: true,
+    defaultValue: () => crypto.randomBytes(24).toString("hex"),
   },
 });
 

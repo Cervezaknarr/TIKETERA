@@ -3,7 +3,22 @@ const Event = require("../models/Event");
 const Ticket = require("../models/Ticket");
 const { v4: uuidv4 } = require("uuid");
 const { sequelize } = require("../config/database");
+const QRCode = require("qrcode");
 const { generateTicketCode } = require("../utils/ticketCode");
+const { sendTicketsEmail } = require("../utils/mailer");
+
+/**
+ * Enviar por email las entradas de una compra ya confirmada
+ * @param {string} purchaseId - ID de la compra
+ */
+const sendPurchaseEmail = async (purchaseId) => {
+  const purchase = await Purchase.findByPk(purchaseId, { include: [Event] });
+  const tickets = await Ticket.findAll({
+    where: { purchaseId },
+    order: [["createdAt", "ASC"], ["code", "ASC"]],
+  });
+  await sendTicketsEmail({ purchase, event: purchase.Event, tickets });
+};
 
 /**
  * @desc    Crear una sesión de pago (simulación de integración con pasarela de pago)
@@ -83,6 +98,7 @@ const createCheckoutSession = async (req, res) => {
         totalPrice: purchase.totalPrice,
         status: purchase.status,
         paymentGatewayId: purchase.paymentGatewayId,
+        accessToken: purchase.accessToken,
       },
       checkoutUrl,
     });
@@ -143,8 +159,12 @@ const handlePaymentWebhook = async (req, res) => {
         }));
         await Ticket.bulkCreate(tickets, { transaction });
 
-        // Aquí se debe encolar un trabajo para enviar el email con los QR
-        console.log(`Enviando email con QR al comprador: ${purchase.buyerEmail}`);
+        // El email se manda después del commit, así nunca llega una entrada que no existe
+        transaction.afterCommit(() => {
+          sendPurchaseEmail(purchase.id).catch((error) =>
+            console.error(`Error al enviar entradas de la compra ${purchase.id}:`, error)
+          );
+        });
       } else if (status === "rejected") {
         purchase.status = "failed";
         await purchase.save({ transaction });
@@ -212,10 +232,19 @@ const getEventPurchases = async (req, res) => {
       });
     }
 
-    // Buscar las compras del evento
+    // Buscar las compras del evento, con sus entradas para ver quién ya ingresó
     const purchases = await Purchase.findAll({
       where: { eventId },
-      order: [["createdAt", "DESC"]],
+      include: [
+        {
+          model: Ticket,
+          attributes: ["code", "status", "holderName", "usedAt"],
+        },
+      ],
+      order: [
+        ["createdAt", "DESC"],
+        [Ticket, "code", "ASC"],
+      ],
     });
 
     res.json({
@@ -232,8 +261,62 @@ const getEventPurchases = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Ver las entradas de una compra con su QR (link que recibe el comprador)
+ * @route   GET /api/purchases/tickets/:accessToken
+ * @access  Public (el token largo y aleatorio funciona como contraseña)
+ */
+const getPurchaseTickets = async (req, res) => {
+  try {
+    const purchase = await Purchase.findOne({
+      where: { accessToken: req.params.accessToken },
+      include: [{ model: Event, attributes: ["title", "date", "location"] }],
+    });
+
+    if (!purchase) {
+      return res.status(404).json({
+        success: false,
+        message: "Compra no encontrada",
+      });
+    }
+
+    const tickets = await Ticket.findAll({
+      where: { purchaseId: purchase.id },
+      order: [["createdAt", "ASC"], ["code", "ASC"]],
+    });
+
+    res.json({
+      success: true,
+      purchase: {
+        buyerName: purchase.buyerName,
+        buyerEmail: purchase.buyerEmail,
+        quantity: purchase.quantity,
+        totalPrice: purchase.totalPrice,
+        status: purchase.status,
+      },
+      event: purchase.Event,
+      tickets: await Promise.all(
+        tickets.map(async (ticket) => ({
+          code: ticket.code,
+          status: ticket.status,
+          holderName: ticket.holderName,
+          qr: await QRCode.toDataURL(ticket.code, { width: 300, margin: 2 }),
+        }))
+      ),
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: "Error al obtener las entradas",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
 module.exports = {
   createCheckoutSession,
   handlePaymentWebhook,
   getEventPurchases,
+  getPurchaseTickets,
 };

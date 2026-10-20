@@ -32,6 +32,27 @@
   .row > * { flex:1; }
   .ticket { text-align:center; }
   .code { font-family:monospace; font-size:.7rem; word-break:break-all; color:var(--muted); }
+  .qr { width:220px; max-width:100%; height:auto; background:#fff; border-radius:8px; }
+  .tcode { font-family:monospace; font-size:1.5rem; letter-spacing:2px; font-weight:700; margin:8px 0 0; }
+  .result { text-align:center; padding:24px 16px; border-radius:12px; margin-top:14px; color:#fff; }
+  .result h2 { margin:0 0 6px; font-size:1.8rem; }
+  .result.ok { background:var(--ok); }
+  .result.err { background:var(--err); }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:14px; }
+  .stat { padding:12px 14px; }
+  .statv { font-size:1.5rem; font-weight:700; margin-top:4px; }
+  .toolbar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  .toolbar input { flex:1 1 220px; width:auto; }
+  .toolbar select { flex:0 0 auto; width:auto; }
+  .table-wrap { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; }
+  th, td { text-align:left; padding:10px 8px; border-bottom:1px solid var(--border); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:.8rem; }
+  .tag { display:inline-block; font-family:monospace; font-size:.75rem; padding:2px 6px; border-radius:6px; margin-top:4px; background:var(--bg); border:1px solid var(--border); white-space:nowrap; }
+  .tag.used, .tag.completed { color:var(--ok); border-color:var(--ok); }
+  .tag.failed, .tag.void, .tag.refunded { color:var(--err); border-color:var(--err); }
+  .tag.pending { color:var(--muted); }
+  select { font:inherit; width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); }
   h2 { margin-top:0; }
   .hidden { display:none; }
 </style>
@@ -47,7 +68,7 @@
 </main>
 
 <script>
-const API = (localStorage.getItem('ticketera_api') || 'http://localhost:5000') + '/api';
+const API = (localStorage.getItem('ticketera_api') || 'http://localhost:3000') + '/api';
 const state = { token: localStorage.getItem('token'), user: JSON.parse(localStorage.getItem('user') || 'null') };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -91,7 +112,9 @@ function logout() { setSession(null, null); go('events'); }
 
 function go(view, arg) {
   flash('');
-  ({ events: viewEvents, login: viewLogin, new: viewNew, buy: viewBuy, validate: viewValidate }[view])(arg);
+  // Solo la vista de entradas tiene URL propia (es el link que llega por email)
+  if (view !== 'tickets' && location.hash) history.replaceState(null, '', location.pathname);
+  ({ events: viewEvents, login: viewLogin, new: viewNew, buy: viewBuy, tickets: viewTickets, validate: viewValidate, buyers: viewBuyers }[view])(arg);
 }
 
 // ---------- Eventos ----------
@@ -107,10 +130,102 @@ async function viewEvents() {
           <p>${esc(e.description)}</p>
           <div class="price">${money(e.ticketPrice)}</div>
           <div class="muted">${e.ticketsAvailable} disponibles</div>
-          <p><button ${e.ticketsAvailable < 1 ? 'disabled' : ''} onclick="go('buy','${e.id}')">${e.ticketsAvailable < 1 ? 'Agotado' : 'Comprar'}</button></p>
+          <p><button ${e.ticketsAvailable < 1 ? 'disabled' : ''} onclick="go('buy','${e.id}')">${e.ticketsAvailable < 1 ? 'Agotado' : 'Comprar'}</button>
+          ${state.user && (e.userId === state.user.id || state.user.role === 'admin') ? `<button class="ghost" onclick="go('buyers','${e.id}')">Compradores</button>` : ''}</p>
         </div>`).join('')}</div>`
       : '<p class="muted">Todavía no hay eventos. Ingresá y creá el primero.</p>');
   } catch (err) { $('view').innerHTML = ''; flash(err.message, 'err'); }
+}
+
+// ---------- Compradores (organizador) ----------
+const purchaseStatus = { completed: 'Pagada', pending: 'Pendiente', failed: 'Rechazada', refunded: 'Reembolsada' };
+let buyers = { event: null, purchases: [] };
+
+async function viewBuyers(eventId) {
+  if (!state.user) return go('login');
+  $('view').innerHTML = '<p class="muted">Cargando…</p>';
+  try {
+    const [{ event }, { purchases }] = await Promise.all([
+      api('/events/' + eventId),
+      api('/purchases/event/' + eventId, { auth: true }),
+    ]);
+    buyers = { event, purchases };
+  } catch (err) { $('view').innerHTML = ''; return flash(err.message, 'err'); }
+
+  const paid = buyers.purchases.filter(p => p.status === 'completed');
+  const tickets = paid.flatMap(p => p.Tickets);
+  const stat = (label, value) => `<div class="card stat"><div class="muted">${label}</div><div class="statv">${value}</div></div>`;
+
+  $('view').innerHTML = `
+  <h2>${esc(buyers.event.title)}</h2>
+  <p class="muted">📅 ${new Date(buyers.event.date).toLocaleString('es-AR')} · 📍 ${esc(buyers.event.location)}</p>
+  <div class="stats">
+    ${stat('Entradas vendidas', tickets.length)}
+    ${stat('Recaudado', money(paid.reduce((s, p) => s + Number(p.totalPrice), 0)))}
+    ${stat('Ingresaron', `${tickets.filter(t => t.status === 'used').length} / ${tickets.length}`)}
+    ${stat('Disponibles', buyers.event.ticketsAvailable)}
+  </div>
+  <div class="card">
+    <div class="toolbar">
+      <input id="bSearch" placeholder="Buscar por nombre, email o código" oninput="renderBuyers()">
+      <select id="bFilter" onchange="renderBuyers()">
+        <option value="completed">Pagadas</option>
+        <option value="all">Todas</option>
+        <option value="pending">Pendientes</option>
+        <option value="failed">Rechazadas</option>
+      </select>
+      <button class="ghost" onclick="exportBuyersCsv()">Exportar CSV</button>
+    </div>
+    <div id="bList"></div>
+  </div>
+  <p><button class="ghost" onclick="go('events')">Volver a eventos</button></p>`;
+  renderBuyers();
+}
+
+function renderBuyers() {
+  const q = $('bSearch').value.trim().toLowerCase();
+  const filter = $('bFilter').value;
+  const list = buyers.purchases.filter(p =>
+    (filter === 'all' || p.status === filter) &&
+    (!q || [p.buyerName, p.buyerEmail, ...p.Tickets.map(t => t.code)].some(v => v.toLowerCase().includes(q)))
+  );
+  const time = (d) => new Date(d).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+
+  $('bList').innerHTML = list.length ? `
+  <div class="table-wrap"><table>
+    <thead><tr><th>Comprador</th><th>Entradas</th><th>Total</th><th>Estado</th><th>Fecha</th><th></th></tr></thead>
+    <tbody>${list.map(p => `
+      <tr>
+        <td><b>${esc(p.buyerName)}</b><br><span class="muted">${esc(p.buyerEmail)}</span></td>
+        <td>${p.quantity}${p.Tickets.length ? `<br>${p.Tickets.map(t => `<span class="tag ${t.status}" title="${t.status === 'used' ? 'Ingresó a las ' + time(t.usedAt) : ''}">${esc(t.code)}${t.status === 'used' ? ' ✓' : ''}</span>`).join(' ')}` : ''}</td>
+        <td>${money(p.totalPrice)}</td>
+        <td><span class="tag ${p.status}">${purchaseStatus[p.status]}</span></td>
+        <td class="muted">${new Date(p.createdAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}</td>
+        <td>${p.status === 'completed' ? `<a href="#/entradas/${esc(p.accessToken)}" target="_blank">Ver entradas</a>` : ''}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table></div>
+  <p class="muted">${list.length} compra(s)</p>`
+  : '<p class="muted">No hay compras que coincidan.</p>';
+}
+
+// Una fila por entrada: sirve de lista de respaldo en papel para la puerta
+function exportBuyersCsv() {
+  const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const rows = [['Codigo', 'Estado entrada', 'Ingreso', 'Comprador', 'Email', 'Estado compra', 'Fecha compra']];
+  for (const p of buyers.purchases) {
+    for (const t of p.Tickets) {
+      rows.push([t.code, t.status === 'used' ? 'Ingresó' : t.status === 'void' ? 'Anulada' : 'Válida',
+        t.usedAt ? new Date(t.usedAt).toLocaleString('es-AR') : '', p.buyerName, p.buyerEmail,
+        purchaseStatus[p.status], new Date(p.createdAt).toLocaleString('es-AR')]);
+    }
+  }
+  const csv = '﻿' + rows.map(r => r.map(cell).join(';')).join('\r\n'); // BOM + ; para que Excel lo abra bien
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `compradores-${buyers.event.title.replace(/[^\w-]+/g, '_')}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 // ---------- Login / registro ----------
@@ -213,43 +328,92 @@ async function submitBuy(ev) {
     }});
     // Simula la pasarela de pago confirmando el cobro
     await api('/purchases/webhook', { method: 'POST', body: { paymentGatewayId: purchase.paymentGatewayId, status: 'approved' } });
-    showTicket(purchase);
+    go('tickets', purchase.accessToken);
+    flash('¡Compra realizada! Estas son tus entradas.');
   } catch (err) { flash(err.message, 'err'); }
 }
 
-function showTicket(p) {
-  $('view').innerHTML = `
-  <div class="card ticket" style="max-width:420px;margin:auto">
-    <h2>¡Compra realizada!</h2>
-    <p class="muted">${esc(currentEvent.title)} · ${p.quantity} entrada(s) · ${money(p.totalPrice)}</p>
-    <p class="muted">El QR de la entrada se envía por email a ${esc(p.buyerEmail)}.</p>
-    <p class="code">Compra ${esc(p.id)}</p>
-    <button onclick="go('events')">Volver a eventos</button>
-  </div>`;
+// ---------- Mis entradas (link privado de la compra) ----------
+async function viewTickets(token) {
+  history.replaceState(null, '', '#/entradas/' + token);
+  $('view').innerHTML = '<p class="muted">Cargando…</p>';
+  try {
+    const { purchase, event, tickets } = await api('/purchases/tickets/' + encodeURIComponent(token));
+    const statusText = { valid: 'Válida', used: 'Ya ingresó', void: 'Anulada' };
+    $('view').innerHTML = `
+    <div style="max-width:420px;margin:auto">
+      <div class="card">
+        <h2>${esc(event.title)}</h2>
+        <p class="muted">📅 ${new Date(event.date).toLocaleString('es-AR')}<br>📍 ${esc(event.location)}</p>
+        <p class="muted">${esc(purchase.buyerName)} · ${purchase.quantity} entrada(s) · ${money(purchase.totalPrice)}</p>
+        ${tickets.length ? '<p class="muted">Cada QR es para una persona. También te llegan por email.</p>' : '<p class="muted">El pago todavía no se confirmó.</p>'}
+      </div>
+      ${tickets.map((t, i) => `
+      <div class="card ticket" style="margin-top:14px">
+        <div class="muted">Entrada ${i + 1} de ${tickets.length} · ${statusText[t.status]}</div>
+        <img class="qr" src="${t.qr}" alt="QR ${esc(t.code)}">
+        <p class="tcode">${esc(t.code)}</p>
+      </div>`).join('')}
+      <p style="text-align:center"><button class="ghost" onclick="go('events')">Volver a eventos</button></p>
+    </div>`;
+  } catch (err) { $('view').innerHTML = ''; flash(err.message, 'err'); }
 }
 
-// ---------- Validar QR (organizador) ----------
-function viewValidate() {
+// ---------- Validar entrada (staff / organizador) ----------
+// Identifica este dispositivo en el registro de ingresos
+const deviceId = localStorage.getItem('deviceId') || (() => {
+  const id = 'web-' + Math.random().toString(36).slice(2, 10);
+  localStorage.setItem('deviceId', id);
+  return id;
+})();
+const uuid = () => crypto.randomUUID ? crypto.randomUUID()
+  : '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
+
+async function viewValidate() {
   if (!state.user) return go('login');
+  let events = [];
+  try { ({ events } = await api('/events?limit=100')); } catch (err) { return flash(err.message, 'err'); }
+  const lastEvent = localStorage.getItem('validateEvent');
   $('view').innerHTML = `
   <div class="card" style="max-width:480px;margin:auto">
     <h2>Validar entrada</h2>
     <form onsubmit="submitValidate(event)">
-      <label>Código QR</label><input id="vCode" required>
+      <label>Evento</label>
+      <select id="vEvent" required onchange="localStorage.setItem('validateEvent', this.value)">
+        ${events.map(e => `<option value="${e.id}" ${e.id === lastEvent ? 'selected' : ''}>${esc(e.title)} · ${new Date(e.date).toLocaleDateString('es-AR')}</option>`).join('')}
+      </select>
+      <label>Código de la entrada</label>
+      <input id="vCode" required autocomplete="off" autocapitalize="characters" placeholder="XXXXX-XXXXX" style="font-family:monospace;font-size:1.2rem">
       <p><button>Validar</button></p>
     </form>
+    <div id="vResult"></div>
   </div>`;
+  $('vCode').focus();
 }
 async function submitValidate(ev) {
   ev.preventDefault();
+  const code = $('vCode').value.trim();
   try {
-    const r = await api('/purchases/validate-qr', { method: 'POST', auth: true, body: { qrCode: $('vCode').value.trim() } });
-    flash(r.message || 'Entrada válida');
+    const { results } = await api(`/checkin/events/${$('vEvent').value}/sync`, { method: 'POST', auth: true, body: {
+      deviceId, since: new Date().toISOString(), scans: [{ id: uuid(), code, scannedAt: new Date().toISOString() }],
+    }});
+    const { result, ticket } = results[0];
+    const time = (d) => new Date(d).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+    const view = {
+      admitted: ['ok', '✅ PUEDE PASAR', ticket?.code],
+      duplicate: ['err', '⛔ YA INGRESÓ', ticket && `${ticket.code} · ingresó a las ${time(ticket.usedAt)}`],
+      invalid: ['err', '❌ CÓDIGO INVÁLIDO', 'No existe una entrada con ese código para este evento'],
+      void: ['err', '❌ ENTRADA ANULADA', ticket?.code],
+    }[result];
+    $('vResult').innerHTML = `<div class="result ${view[0]}"><h2>${view[1]}</h2><div>${esc(view[2])}</div></div>`;
+    $('vCode').value = '';
+    $('vCode').focus();
   } catch (err) { flash(err.message, 'err'); }
 }
 
 renderNav();
-go('events');
+const ticketsLink = location.hash.match(/^#\/entradas\/([\w-]+)$/);
+ticketsLink ? go('tickets', ticketsLink[1]) : go('events');
 </script>
 </body>
 </html>

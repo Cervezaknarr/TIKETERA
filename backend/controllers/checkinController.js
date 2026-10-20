@@ -12,6 +12,12 @@ const MAX_SCANS_PER_SYNC = 500;
 // confirmaron justo mientras se respondía el sync anterior
 const SINCE_OVERLAP_MS = 60 * 1000;
 
+/**
+ * Pueden controlar el acceso el staff, los admin y el organizador del evento
+ */
+const canCheckIn = (user, event) =>
+  user.role === "staff" || user.role === "admin" || event.userId === user.id;
+
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -151,6 +157,13 @@ const syncCheckin = async (req, res) => {
       });
     }
 
+    if (!canCheckIn(req.user, event)) {
+      return res.status(403).json({
+        success: false,
+        message: "No tienes permiso para controlar el acceso a este evento",
+      });
+    }
+
     // Procesar en orden: si el mismo dispositivo escaneó dos veces la misma
     // entrada, la primera es "admitted" y la segunda "duplicate"
     const results = [];
@@ -222,6 +235,13 @@ const getCheckinStats = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Evento no encontrado",
+      });
+    }
+
+    if (!canCheckIn(req.user, event)) {
+      return res.status(403).json({
+        success: false,
+        message: "No tienes permiso para ver las estadísticas de este evento",
       });
     }
 
