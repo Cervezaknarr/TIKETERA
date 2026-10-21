@@ -1,5 +1,5 @@
 const { Op } = require("sequelize");
-const Event = require("../models/Event");
+const Lot = require("../models/Lot");
 const Purchase = require("../models/Purchase");
 const { sequelize } = require("../config/database");
 
@@ -9,26 +9,30 @@ const DEFAULT_HOLD_MINUTES = 40;
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
- * Devolver las entradas de una compra al inventario del evento
+ * Devolver las entradas de una compra al cupo de su lote
  */
-const releaseStock = (purchase, transaction) =>
-  Event.increment("ticketsAvailable", {
+const releaseStock = async (purchase, transaction) => {
+  // Las compras anteriores a los lotes se migran al arrancar; por las dudas, una
+  // sin lote no rompe el flujo
+  if (!purchase.lotId) return;
+  await Lot.increment("ticketsAvailable", {
     by: purchase.quantity,
-    where: { id: purchase.eventId },
+    where: { id: purchase.lotId },
     transaction,
   });
+};
 
 /**
- * Descuento atómico: solo se aplica si todavía quedan entradas, así dos compras
- * simultáneas de las últimas entradas no pueden vender de más
+ * Descuento atómico: solo se aplica si todavía quedan entradas en el lote, así
+ * dos compras simultáneas de las últimas entradas no pueden vender de más
  * (quantity es un entero validado, es seguro interpolarlo)
  * @returns {Promise<boolean>} true si se pudo reservar el cupo
  */
-const reserveStock = async (eventId, quantity, transaction) => {
-  const [reserved] = await Event.update(
+const reserveStock = async (lotId, quantity, transaction) => {
+  const [reserved] = await Lot.update(
     { ticketsAvailable: sequelize.literal(`"ticketsAvailable" - ${quantity}`) },
     {
-      where: { id: eventId, ticketsAvailable: { [Op.gte]: quantity } },
+      where: { id: lotId, ticketsAvailable: { [Op.gte]: quantity } },
       transaction,
     }
   );

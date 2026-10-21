@@ -13,6 +13,7 @@ const app = require("../server");
 const { sequelize } = require("../config/database");
 const User = require("../models/User");
 const Event = require("../models/Event");
+const Lot = require("../models/Lot");
 const Purchase = require("../models/Purchase");
 const Ticket = require("../models/Ticket");
 const Scan = require("../models/Scan");
@@ -24,6 +25,7 @@ const {
 let server;
 let baseUrl;
 let event;
+let lot;
 let staffToken;
 let userToken;
 let organizerToken;
@@ -84,9 +86,15 @@ before(async () => {
     description: "Evento de prueba",
     date: new Date(Date.now() + 86400000),
     location: "Salón",
-    ticketPrice: 1000,
-    ticketsAvailable: 400,
     userId: organizer.id,
+  });
+  // Con un solo lote no hace falta indicarlo al comprar
+  lot = await Lot.create({
+    eventId: event.id,
+    name: "General",
+    price: 1000,
+    quantity: 400,
+    ticketsAvailable: 400,
   });
 
   server = app.listen(0);
@@ -152,7 +160,7 @@ test("el link privado de la compra muestra las entradas con su QR", async () => 
 });
 
 test("un pago rechazado devuelve el cupo una sola vez", async () => {
-  const before = (await Event.findByPk(event.id)).ticketsAvailable;
+  const before = (await Lot.findByPk(lot.id)).ticketsAvailable;
   const checkout = await api("POST", "/api/purchases/checkout", {
     body: {
       eventId: event.id,
@@ -169,7 +177,7 @@ test("un pago rechazado devuelve el cupo una sola vez", async () => {
     });
   }
 
-  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, before);
+  assert.equal((await Lot.findByPk(lot.id)).ticketsAvailable, before);
   const purchase = await Purchase.findOne({ where: { paymentGatewayId } });
   assert.equal(purchase.status, "failed");
   assert.equal(await Ticket.count({ where: { purchaseId: purchase.id } }), 0);

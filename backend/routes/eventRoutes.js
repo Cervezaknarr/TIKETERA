@@ -7,6 +7,7 @@ const {
   updateEvent,
   deleteEvent,
 } = require("../controllers/eventController");
+const { addLot, updateLot, deleteLot } = require("../controllers/lotController");
 const { protect } = require("../middleware/authMiddleware");
 
 // Rutas públicas
@@ -17,5 +18,10 @@ router.get("/:id", getEventById);
 router.post("/", protect, createEvent);
 router.put("/:id", protect, updateEvent);
 router.delete("/:id", protect, deleteEvent);
+
+// Lotes (tipos de entrada) del evento
+router.post("/:eventId/lots", protect, addLot);
+router.put("/:eventId/lots/:lotId", protect, updateLot);
+router.delete("/:eventId/lots/:lotId", protect, deleteLot);
 
 module.exports = router;

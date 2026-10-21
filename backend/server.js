@@ -4,6 +4,7 @@ const cors = require('cors');
 require('dotenv').config();
 const { sequelize, testConnection } = require('./config/database');
 const { startExpirationSweep } = require('./utils/purchases');
+const { migrateEventsToLots } = require('./utils/migrateLots');
 
 // Importar rutas
 const authRoutes = require("./routes/authRoutes");
@@ -84,6 +85,10 @@ const startServer = async () => {
     // Para desarrollo, puedes usar { force: true } para recrear las tablas
     await sequelize.sync({ alter: true });
     console.log("Base de datos sincronizada correctamente");
+
+    // Eventos anteriores a los lotes: pasan a tener un lote "General"
+    const migrated = await migrateEventsToLots();
+    if (migrated) console.log(`Eventos migrados a lotes: ${migrated}`);
 
     // Iniciar servidor
     app.listen(PORT, () => {

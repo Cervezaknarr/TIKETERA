@@ -150,8 +150,8 @@ module.exports = {
           amount: { currency: "ARS", value: total },
           products: [
             {
-              name: String(event.title).slice(0, 100),
-              description: `Entrada para ${event.title}`.slice(0, 200),
+              name: [event.title, purchase.lotName].filter(Boolean).join(" - ").slice(0, 100),
+              description: `Entrada ${purchase.lotName || ""} para ${event.title}`.replace(/\s+/g, " ").slice(0, 200),
               quantity: purchase.quantity,
               unit_price: { currency: "ARS", value: unitPrice },
             },

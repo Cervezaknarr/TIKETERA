@@ -11,6 +11,7 @@ const app = require("../server");
 const { sequelize } = require("../config/database");
 const User = require("../models/User");
 const Event = require("../models/Event");
+const Lot = require("../models/Lot");
 const Purchase = require("../models/Purchase");
 const Ticket = require("../models/Ticket");
 const { setProvider } = require("../utils/payments");
@@ -29,20 +30,32 @@ const post = async (path, body) => {
   return { status: res.status, body: await res.json() };
 };
 
-const newEvent = (ticketsAvailable) =>
-  Event.create({
+// Evento con un lote General de precio 1000. El lote queda en event.lot
+const newEvent = async (ticketsAvailable) => {
+  const event = await Event.create({
     title: "Evento",
     description: "Prueba",
     date: new Date(Date.now() + 86400000),
     location: "Salón",
-    ticketPrice: 1000,
-    ticketsAvailable,
     userId: organizer.id,
   });
+  event.lot = await Lot.create({
+    eventId: event.id,
+    name: "General",
+    price: 1000,
+    quantity: ticketsAvailable,
+    ticketsAvailable,
+  });
+  return event;
+};
+
+// Cupo que queda en el lote del evento
+const available = async (event) => (await Lot.findByPk(event.lot.id)).ticketsAvailable;
 
 const checkout = (event, quantity, name = "Comprador") =>
   post("/api/purchases/checkout", {
     eventId: event.id,
+    lotId: event.lot.id,
     buyerName: name,
     buyerEmail: "comprador@test.com",
     quantity,
@@ -80,7 +93,7 @@ test("no se vende más cupo del que hay", async () => {
   assert.equal(second.status, 400);
   assert.match(second.body.message, /Solo quedan 2 entradas/);
   assert.equal(third.status, 201);
-  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 0);
+  assert.equal((await available(event)), 0);
 
   const soldOut = await checkout(event, 1, "D");
   assert.equal(soldOut.status, 400);
@@ -94,7 +107,7 @@ test("el checkout rechaza cantidades inválidas sin tocar el cupo", async () => 
     const res = await checkout(event, quantity);
     assert.equal(res.status, 400, `quantity=${JSON.stringify(quantity)}`);
   }
-  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 10);
+  assert.equal((await available(event)), 10);
 });
 
 test("con una pasarela real el checkout devuelve su URL de pago", async () => {
@@ -126,7 +139,7 @@ test("si la pasarela falla al crear el pago, se libera el cupo", async () => {
 
   const res = await checkout(event, 4);
   assert.equal(res.status, 500);
-  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 10);
+  assert.equal((await available(event)), 10);
   const purchase = await Purchase.findOne({ where: { eventId: event.id } });
   assert.equal(purchase.status, "failed");
 });
@@ -156,7 +169,7 @@ test("el webhook usa el estado verificado por la pasarela, no el del body", asyn
   const purchase = await Purchase.findByPk(body.purchase.id);
   assert.equal(purchase.status, "failed");
   assert.equal(await Ticket.count({ where: { purchaseId: purchase.id } }), 0);
-  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 10);
+  assert.equal((await available(event)), 10);
 });
 
 test("un webhook inválido se rechaza y uno pendiente no cambia nada", async () => {
@@ -471,17 +484,17 @@ test("las compras pendientes vencidas liberan su cupo y las recientes no", async
   const old = (await checkout(event, 3, "Vieja")).body.purchase;
   const recent = (await checkout(event, 2, "Reciente")).body.purchase;
   await age({ id: old.id }, 120);
-  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 5);
+  assert.equal((await available(event)), 5);
 
   assert.equal(await releaseExpiredPurchases(), 1);
 
   assert.equal((await Purchase.findByPk(old.id)).status, "failed");
   assert.equal((await Purchase.findByPk(recent.id)).status, "pending");
-  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 8);
+  assert.equal((await available(event)), 8);
 
   // Una segunda pasada no libera dos veces
   assert.equal(await releaseExpiredPurchases(), 0);
-  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 8);
+  assert.equal((await available(event)), 8);
 });
 
 test("las compras ya pagadas no se liberan aunque sean viejas", async () => {
@@ -493,7 +506,7 @@ test("las compras ya pagadas no se liberan aunque sean viejas", async () => {
 
   assert.equal(await releaseExpiredPurchases(), 0);
   assert.equal((await Purchase.findByPk(purchase.id)).status, "completed");
-  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 8);
+  assert.equal((await available(event)), 8);
 });
 
 test("un pago aprobado tras vencer la compra la recupera si queda cupo", async () => {
@@ -502,14 +515,14 @@ test("un pago aprobado tras vencer la compra la recupera si queda cupo", async (
   const { purchase } = (await checkout(event, 2)).body;
   await age({ id: purchase.id }, 120);
   await releaseExpiredPurchases();
-  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 10);
+  assert.equal((await available(event)), 10);
 
   const res = await post("/api/purchases/webhook", { id: purchase.paymentGatewayId });
   assert.equal(res.status, 200);
 
   assert.equal((await Purchase.findByPk(purchase.id)).status, "completed");
   assert.equal(await Ticket.count({ where: { purchaseId: purchase.id } }), 2);
-  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 8);
+  assert.equal((await available(event)), 8);
 });
 
 test("un pago aprobado tras vencer sin cupo no emite entradas y avisa", async () => {
@@ -536,5 +549,5 @@ test("un pago aprobado tras vencer sin cupo no emite entradas y avisa", async ()
   assert.match(errors.join("\n"), /PAGO APROBADO SIN CUPO/);
   assert.equal((await Purchase.findByPk(purchase.id)).status, "failed");
   assert.equal(await Ticket.count({ where: { purchaseId: purchase.id } }), 0);
-  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 0);
+  assert.equal((await available(event)), 0);
 });

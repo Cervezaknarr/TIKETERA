@@ -1,5 +1,6 @@
 const Purchase = require("../models/Purchase");
 const Event = require("../models/Event");
+const Lot = require("../models/Lot");
 const Ticket = require("../models/Ticket");
 const { sequelize } = require("../config/database");
 const { releaseStock, reserveStock } = require("../utils/purchases");
@@ -28,7 +29,7 @@ const sendPurchaseEmail = async (purchaseId) => {
  */
 const createCheckoutSession = async (req, res) => {
   try {
-    const { eventId, buyerEmail, buyerName, quantity } = req.body;
+    const { eventId, lotId, buyerEmail, buyerName, quantity } = req.body;
 
     // Verificar campos obligatorios
     if (!eventId || !buyerEmail || !buyerName || !Number.isInteger(quantity) || quantity < 1) {
@@ -48,17 +49,40 @@ const createCheckoutSession = async (req, res) => {
       });
     }
 
-    // Reservar el cupo y crear la compra en una sola transacción
+    if (event.status !== "published") {
+      return res.status(400).json({
+        success: false,
+        message: "Este evento no está a la venta",
+      });
+    }
+
+    // El lote tiene que ser del evento. Si el evento tiene uno solo, no hace
+    // falta indicarlo
+    const lots = await Lot.findAll({ where: { eventId } });
+    const lot = lotId ? lots.find((l) => l.id === lotId) : lots.length === 1 ? lots[0] : null;
+    if (!lot) {
+      return res.status(400).json({
+        success: false,
+        message: lotId ? "El lote no pertenece a este evento" : "Elegí un tipo de entrada",
+      });
+    }
+
+    // Reservar el cupo y crear la compra en una sola transacción. El precio se
+    // fija ahora: editar el lote después no cambia lo que se está pagando
+    const unitPrice = Number(lot.price);
     const reservation = await sequelize.transaction(async (transaction) => {
-      if (!(await reserveStock(eventId, quantity, transaction))) return null;
+      if (!(await reserveStock(lot.id, quantity, transaction))) return null;
 
       return Purchase.create(
         {
           eventId,
+          lotId: lot.id,
+          lotName: lot.name,
+          unitPrice,
           buyerEmail,
           buyerName,
           quantity,
-          totalPrice: event.ticketPrice * quantity,
+          totalPrice: Math.round(unitPrice * quantity * 100) / 100,
           status: "pending",
         },
         { transaction }
@@ -66,10 +90,13 @@ const createCheckoutSession = async (req, res) => {
     });
 
     if (!reservation) {
-      const current = await Event.findByPk(eventId);
+      const { ticketsAvailable } = await Lot.findByPk(lot.id);
       return res.status(400).json({
         success: false,
-        message: `Solo quedan ${current.ticketsAvailable} entradas disponibles`,
+        message:
+          ticketsAvailable < 1
+            ? `El lote ${lot.name} está agotado`
+            : `Solo quedan ${ticketsAvailable} entradas disponibles en ${lot.name}`,
       });
     }
     const purchase = reservation;
@@ -94,6 +121,7 @@ const createCheckoutSession = async (req, res) => {
       purchase: {
         id: purchase.id,
         eventId: purchase.eventId,
+        lotName: purchase.lotName,
         buyerEmail: purchase.buyerEmail,
         quantity: purchase.quantity,
         totalPrice: purchase.totalPrice,
@@ -159,7 +187,7 @@ const handlePaymentWebhook = async (req, res) => {
       if (purchase.status !== "pending" && !lateApproval) return "already_processed";
 
       if (status === "approved") {
-        if (lateApproval && !(await reserveStock(purchase.eventId, purchase.quantity, transaction))) {
+        if (lateApproval && !(await reserveStock(purchase.lotId, purchase.quantity, transaction))) {
           return "paid_without_stock";
         }
         purchase.status = "completed";
@@ -312,6 +340,7 @@ const getPurchaseTickets = async (req, res) => {
       purchase: {
         buyerName: purchase.buyerName,
         buyerEmail: purchase.buyerEmail,
+        lotName: purchase.lotName,
         quantity: purchase.quantity,
         totalPrice: purchase.totalPrice,
         status: purchase.status,

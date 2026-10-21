@@ -61,10 +61,23 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - [ ] ~~Armar un túnel (ngrok)~~ ya no hace falta: `BACKEND_URL` será la URL de Render
 - [ ] Probar una compra completa: pagar con el usuario de prueba y ver que lleguen las entradas con QR
 
+### Lotes (tipos de entrada) y edición de eventos (2026-10-21, rama `haciendoLotes`)
+- Nuevo modelo `Lot` (`backend/models/Lot.js`): nombre, precio, `quantity` (asignada) y `ticketsAvailable` (lo que queda). Ej.: EARLY, VIP, General, Jugador. **Agotada = `ticketsAvailable` 0.**
+- El precio y el cupo ya no viven en el evento: las columnas `ticketPrice`/`ticketsAvailable` de `Event` quedaron nullable y en desuso. Al arrancar, `utils/migrateLots.js` convierte los eventos viejos en un lote "General" (con sus compras asociadas). Es idempotente.
+- Una compra es de **un solo lote**; guarda `lotId`, `lotName` y `unitPrice` tal como estaban al comprar (editar el lote después no cambia las compras).
+- API: `PUT /api/events/:id` (datos y estado del evento), `POST /api/events/:id/lots`, `PUT .../lots/:lotId` (nombre, precio, `quantity` o `soldOut: true`), `DELETE .../lots/:lotId`. Todo solo para el organizador del evento (o admin).
+- Reglas: no se puede asignar menos de lo ya vendido o reservado; un lote con compras no se borra (se agota); el evento siempre tiene al menos un lote; un evento en borrador o cancelado no vende.
+- Frontend: crear evento con lotes, pantalla "Editar" (datos del evento + lotes con Guardar / Agotar / Borrar / Agregar), listado con lotes y etiqueta "Agotada", compra eligiendo lote, columna de lote en compradores y CSV. Probado en el navegador con un servidor local.
+- 53 tests pasan (16 nuevos en `test/lots.test.js`).
+- [ ] **Sin probar en Postgres:** al desplegar, `sync({ alter: true })` crea la tabla `Lots`, agrega columnas a `Purchases` y relaja `Events.ticketPrice/ticketsAvailable`; luego corre la migración de FIESTARDA. Revisar los logs de Render después del primer deploy (buscar "Eventos migrados a lotes").
+- [ ] Fusionar `haciendoLotes` con `prod` y `main` cuando el usuario lo decida
+
 ### Rama de producción (2026-10-21)
 - La rama `integracionPagos` se renombró a **`prod`**; es la que lee Render (el Blueprint ya apunta a `prod`).
 - Al cambiar la rama, el Blueprint quiso pisar `PAYMENT_PROVIDER` con `mock` (el valor de `render.yaml`) y pidió aprobación. No se aprobó: `PAYMENT_PROVIDER` quedó con `sync: false` en `render.yaml`, así que el valor del panel manda. **Si Render vuelve a pedir "Approve" por una variable, no aprobar sin mirar qué cambia.**
-- [ ] Cambiar también la rama en Settings del servicio `ticketera` y después borrar `integracionPagos` de GitHub
+- [x] Rama cambiada a `prod` también en el servicio `ticketera`
+- `integracionPagos` **se conserva** en GitHub a pedido del usuario (no borrarla)
+- **Rama de trabajo actual: `haciendoLotes`** (creada el 2026-10-21 desde `prod`, ya subida a GitHub). Cuando el usuario termine, se fusiona con `prod` y `main`. Mientras tanto, lo que se pushee ahí **no** redespliega Render (solo lo hace `prod`).
 
 ### Seguridad de dependencias
 - [x] `npm audit fix` aplicado en local (2026-10-20): de 13 vulnerabilidades quedan 2 moderadas en producción, ambas de `uuid`. No afectan: solo fallan en v3/v5/v6 con buffer propio y el proyecto usa v4. Arreglarlas requiere `--force` (cambio mayor), no vale la pena ahora.

@@ -55,6 +55,21 @@
   select { font:inherit; width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); }
   h2 { margin-top:0; }
   .hidden { display:none; }
+  .lots { margin:8px 0; }
+  .lot { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:6px 0; border-bottom:1px dashed var(--border); }
+  .lot:last-child { border-bottom:0; }
+  .lot.sold b, .lot.sold span { color:var(--muted); }
+  .tag.soldout { color:var(--err); border-color:var(--err); font-family:inherit; margin:0; }
+  .lotrow { align-items:flex-end; margin-bottom:8px; }
+  .lotrow label { margin-top:0; }
+  .lotrow > .grow { flex:2; }
+  .lotrow > .fit { flex:0 0 auto; }
+  button.danger { background:transparent; color:var(--err); border-color:var(--err); }
+  .choice { display:flex; align-items:center; gap:10px; padding:10px 12px; margin:6px 0; border:1px solid var(--border); border-radius:10px; cursor:pointer; }
+  .choice input { width:auto; margin:0; }
+  .choice.sold { opacity:.55; cursor:default; }
+  .choice .grow { flex:1; }
+  .choice:has(input:checked) { border-color:var(--accent); background:color-mix(in srgb,var(--accent) 8%,transparent); }
 </style>
 </head>
 <body>
@@ -117,24 +132,31 @@ function go(view, arg) {
   flash('');
   // Solo la vista de entradas tiene URL propia (es el link que llega por email)
   if (view !== 'tickets' && location.hash) history.replaceState(null, '', location.pathname);
-  ({ events: viewEvents, login: viewLogin, new: viewNew, buy: viewBuy, tickets: viewTickets, validate: viewValidate, buyers: viewBuyers }[view])(arg);
+  ({ events: viewEvents, login: viewLogin, new: viewNew, buy: viewBuy, tickets: viewTickets, validate: viewValidate, buyers: viewBuyers, edit: viewEdit }[view])(arg);
 }
 
 // ---------- Eventos ----------
+const isManager = (e) => state.user && (e.userId === state.user.id || state.user.role === 'admin');
+
 async function viewEvents() {
   $('view').innerHTML = '<p class="muted">Cargando…</p>';
   try {
-    const { events } = await api('/events');
+    // Borradores y cancelados solo los ve su organizador
+    const events = (await api('/events')).events.filter(e => e.status === 'published' || isManager(e));
     $('view').innerHTML = `<h2>Próximos eventos</h2>` + (events.length
       ? `<div class="grid">${events.map(e => `
         <div class="card">
-          <h3>${esc(e.title)}</h3>
+          <h3>${esc(e.title)} ${e.status !== 'published' ? `<span class="tag failed">${e.status === 'draft' ? 'Borrador' : 'Cancelado'}</span>` : ''}</h3>
           <div class="muted">📅 ${new Date(e.date).toLocaleString('es-AR')}<br>📍 ${esc(e.location)}</div>
           <p>${esc(e.description)}</p>
-          <div class="price">${money(e.ticketPrice)}</div>
-          <div class="muted">${e.ticketsAvailable} disponibles</div>
-          <p><button ${e.ticketsAvailable < 1 ? 'disabled' : ''} onclick="go('buy','${e.id}')">${e.ticketsAvailable < 1 ? 'Agotado' : 'Comprar'}</button>
-          ${state.user && (e.userId === state.user.id || state.user.role === 'admin') ? `<button class="ghost" onclick="go('buyers','${e.id}')">Compradores</button>` : ''}</p>
+          <div class="lots">${e.lots.map(l => `
+            <div class="lot ${l.ticketsAvailable < 1 ? 'sold' : ''}">
+              <b>${esc(l.name)}</b>
+              ${l.ticketsAvailable < 1 ? '<span class="tag soldout">Agotada</span>' : `<span class="price" style="margin:0">${money(l.price)}</span>`}
+            </div>`).join('')}</div>
+          <p><button ${e.ticketsAvailable < 1 || e.status !== 'published' ? 'disabled' : ''} onclick="go('buy','${e.id}')">${e.ticketsAvailable < 1 ? 'Agotado' : 'Comprar'}</button>
+          ${isManager(e) ? `<button class="ghost" onclick="go('buyers','${e.id}')">Compradores</button>
+          <button class="ghost" onclick="go('edit','${e.id}')">Editar</button>` : ''}</p>
         </div>`).join('')}</div>`
       : '<p class="muted">Todavía no hay eventos. Ingresá y creá el primero.</p>');
   } catch (err) { $('view').innerHTML = ''; flash(err.message, 'err'); }
@@ -190,7 +212,7 @@ function renderBuyers() {
   const filter = $('bFilter').value;
   const list = buyers.purchases.filter(p =>
     (filter === 'all' || p.status === filter) &&
-    (!q || [p.buyerName, p.buyerEmail, ...p.Tickets.map(t => t.code)].some(v => v.toLowerCase().includes(q)))
+    (!q || [p.buyerName, p.buyerEmail, p.lotName || '', ...p.Tickets.map(t => t.code)].some(v => v.toLowerCase().includes(q)))
   );
   const time = (d) => new Date(d).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
 
@@ -200,7 +222,7 @@ function renderBuyers() {
     <tbody>${list.map(p => `
       <tr>
         <td><b>${esc(p.buyerName)}</b><br><span class="muted">${esc(p.buyerEmail)}</span></td>
-        <td>${p.quantity}${p.Tickets.length ? `<br>${p.Tickets.map(t => `<span class="tag ${t.status}" title="${t.status === 'used' ? 'Ingresó a las ' + time(t.usedAt) : ''}">${esc(t.code)}${t.status === 'used' ? ' ✓' : ''}</span>`).join(' ')}` : ''}</td>
+        <td>${p.quantity}${p.lotName ? ` · <b>${esc(p.lotName)}</b>` : ''}${p.Tickets.length ? `<br>${p.Tickets.map(t => `<span class="tag ${t.status}" title="${t.status === 'used' ? 'Ingresó a las ' + time(t.usedAt) : ''}">${esc(t.code)}${t.status === 'used' ? ' ✓' : ''}</span>`).join(' ')}` : ''}</td>
         <td>${money(p.totalPrice)}</td>
         <td><span class="tag ${p.status}">${purchaseStatus[p.status]}</span></td>
         <td class="muted">${new Date(p.createdAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}</td>
@@ -215,10 +237,10 @@ function renderBuyers() {
 // Una fila por entrada: sirve de lista de respaldo en papel para la puerta
 function exportBuyersCsv() {
   const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const rows = [['Codigo', 'Estado entrada', 'Ingreso', 'Comprador', 'Email', 'Estado compra', 'Fecha compra']];
+  const rows = [['Codigo', 'Lote', 'Estado entrada', 'Ingreso', 'Comprador', 'Email', 'Estado compra', 'Fecha compra']];
   for (const p of buyers.purchases) {
     for (const t of p.Tickets) {
-      rows.push([t.code, t.status === 'used' ? 'Ingresó' : t.status === 'void' ? 'Anulada' : 'Válida',
+      rows.push([t.code, p.lotName || '', t.status === 'used' ? 'Ingresó' : t.status === 'void' ? 'Anulada' : 'Válida',
         t.usedAt ? new Date(t.usedAt).toLocaleString('es-AR') : '', p.buyerName, p.buyerEmail,
         purchaseStatus[p.status], new Date(p.createdAt).toLocaleString('es-AR')]);
     }
@@ -277,24 +299,155 @@ function viewNew() {
         <div><label>Fecha y hora</label><input id="eDate" type="datetime-local" required></div>
         <div><label>Lugar</label><input id="eLoc" required></div>
       </div>
-      <div class="row">
-        <div><label>Precio</label><input id="ePrice" type="number" min="0" step="0.01" required></div>
-        <div><label>Entradas</label><input id="eStock" type="number" min="1" required></div>
-      </div>
+      <h3 style="margin-bottom:0">Tipos de entrada</h3>
+      <p class="muted" style="margin-top:4px">Cada lote tiene su precio y su cantidad. Después los podés editar o agotar.</p>
+      <datalist id="lotNames"><option value="EARLY"><option value="VIP"><option value="General"><option value="Jugador"></datalist>
+      <div id="lotRows"></div>
+      <p><button type="button" class="ghost" onclick="addLotRow()">+ Agregar lote</button></p>
       <p><button>Publicar</button></p>
     </form>
   </div>`;
+  addLotRow('General');
+}
+// Fila para cargar un lote (nombre, precio, cantidad)
+function addLotRow(name = '') {
+  const row = document.createElement('div');
+  row.className = 'row lotrow';
+  row.innerHTML = `
+    <div class="grow"><label>Lote</label><input class="lName" list="lotNames" value="${esc(name)}" placeholder="EARLY, VIP…" required maxlength="60"></div>
+    <div><label>Precio</label><input class="lPrice" type="number" min="0" step="0.01" required></div>
+    <div><label>Cantidad</label><input class="lQty" type="number" min="1" step="1" required></div>
+    <div class="fit"><button type="button" class="danger" title="Quitar" onclick="removeLotRow(this)">✕</button></div>`;
+  $('lotRows').appendChild(row);
+}
+function removeLotRow(btn) {
+  if (document.querySelectorAll('#lotRows .lotrow').length < 2) return flash('El evento necesita al menos un lote', 'err');
+  btn.closest('.lotrow').remove();
 }
 async function submitEvent(ev) {
   ev.preventDefault();
   try {
+    const lots = [...document.querySelectorAll('#lotRows .lotrow')].map(r => ({
+      name: r.querySelector('.lName').value.trim(),
+      price: Number(r.querySelector('.lPrice').value),
+      quantity: Number(r.querySelector('.lQty').value),
+    }));
     await api('/events', { method: 'POST', auth: true, body: {
       title: $('eTitle').value, description: $('eDesc').value,
-      date: new Date($('eDate').value).toISOString(), location: $('eLoc').value,
-      ticketPrice: Number($('ePrice').value), ticketsAvailable: Number($('eStock').value),
+      date: new Date($('eDate').value).toISOString(), location: $('eLoc').value, lots,
     }});
     go('events');
     flash('Evento creado');
+  } catch (err) { flash(err.message, 'err'); }
+}
+
+// ---------- Editar evento y lotes (organizador) ----------
+const toLocalInput = (d) => { const t = new Date(d); return new Date(t - t.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
+
+async function viewEdit(id) {
+  if (!state.user) return go('login');
+  let event;
+  try { ({ event } = await api('/events/' + id)); } catch (err) { return flash(err.message, 'err'); }
+  if (!isManager(event)) return flash('No tenés permiso para editar este evento', 'err');
+
+  $('view').innerHTML = `
+  <div class="card" style="max-width:720px;margin:auto">
+    <h2>Editar evento</h2>
+    <form onsubmit="saveEvent(event,'${event.id}')">
+      <label>Título</label><input id="eTitle" value="${esc(event.title)}" required>
+      <label>Descripción</label><textarea id="eDesc" rows="3" required>${esc(event.description)}</textarea>
+      <div class="row">
+        <div><label>Fecha y hora</label><input id="eDate" type="datetime-local" value="${toLocalInput(event.date)}" required></div>
+        <div><label>Lugar</label><input id="eLoc" value="${esc(event.location)}" required></div>
+      </div>
+      <label>Estado</label>
+      <select id="eStatus">
+        <option value="published" ${event.status === 'published' ? 'selected' : ''}>Publicado (a la venta)</option>
+        <option value="draft" ${event.status === 'draft' ? 'selected' : ''}>Borrador (oculto, sin ventas)</option>
+        <option value="cancelled" ${event.status === 'cancelled' ? 'selected' : ''}>Cancelado</option>
+      </select>
+      <p><button>Guardar datos del evento</button></p>
+    </form>
+
+    <h3>Tipos de entrada</h3>
+    <p class="muted">Cambiar el precio o el nombre solo afecta las compras nuevas. “Vendidas” incluye las reservadas por compras que todavía no se pagaron.</p>
+    ${event.lots.map(l => {
+      const sold = l.quantity - l.ticketsAvailable;
+      return `
+      <div class="card" style="margin-bottom:10px">
+        <div class="row lotrow">
+          <div class="grow"><label>Lote</label><input id="lName_${l.id}" value="${esc(l.name)}" maxlength="60"></div>
+          <div><label>Precio</label><input id="lPrice_${l.id}" type="number" min="0" step="0.01" value="${Number(l.price)}"></div>
+          <div><label>Cantidad asignada</label><input id="lQty_${l.id}" type="number" min="${sold}" step="1" value="${l.quantity}"></div>
+        </div>
+        <p class="muted" style="margin:6px 0">Vendidas: <b>${sold}</b> · Disponibles: <b>${l.ticketsAvailable}</b>
+          ${l.ticketsAvailable < 1 ? '<span class="tag soldout">Agotada</span>' : ''}</p>
+        <button type="button" onclick="saveLot('${event.id}','${l.id}')">Guardar lote</button>
+        <button type="button" class="ghost" ${l.ticketsAvailable < 1 ? 'disabled' : ''} onclick="soldOutLot('${event.id}','${l.id}')">Agotar</button>
+        <button type="button" class="danger" ${sold > 0 || event.lots.length < 2 ? 'disabled' : ''}
+          title="${sold > 0 ? 'Ya tiene ventas: podés agotarlo' : event.lots.length < 2 ? 'El evento necesita al menos un lote' : ''}"
+          onclick="deleteLotBtn('${event.id}','${l.id}')">Borrar</button>
+      </div>`;
+    }).join('')}
+
+    <div class="card">
+      <h4 style="margin:0">Agregar un lote</h4>
+      <datalist id="lotNames"><option value="EARLY"><option value="VIP"><option value="General"><option value="Jugador"></datalist>
+      <div class="row lotrow">
+        <div class="grow"><label>Lote</label><input id="nName" list="lotNames" maxlength="60" placeholder="EARLY, VIP…"></div>
+        <div><label>Precio</label><input id="nPrice" type="number" min="0" step="0.01"></div>
+        <div><label>Cantidad</label><input id="nQty" type="number" min="1" step="1"></div>
+      </div>
+      <button type="button" onclick="addLotBtn('${event.id}')">Agregar lote</button>
+    </div>
+    <p><button class="ghost" onclick="go('events')">Volver a eventos</button></p>
+  </div>`;
+}
+
+async function saveEvent(ev, id) {
+  ev.preventDefault();
+  try {
+    await api('/events/' + id, { method: 'PUT', auth: true, body: {
+      title: $('eTitle').value, description: $('eDesc').value, location: $('eLoc').value,
+      date: new Date($('eDate').value).toISOString(), status: $('eStatus').value,
+    }});
+    await viewEdit(id);
+    flash('Evento actualizado');
+  } catch (err) { flash(err.message, 'err'); }
+}
+async function saveLot(eventId, lotId) {
+  try {
+    await api(`/events/${eventId}/lots/${lotId}`, { method: 'PUT', auth: true, body: {
+      name: $('lName_' + lotId).value, price: Number($('lPrice_' + lotId).value), quantity: Number($('lQty_' + lotId).value),
+    }});
+    await viewEdit(eventId);
+    flash('Lote actualizado');
+  } catch (err) { flash(err.message, 'err'); }
+}
+async function soldOutLot(eventId, lotId) {
+  if (!confirm('¿Agotar este lote? Nadie podrá comprarlo hasta que vuelvas a subir la cantidad.')) return;
+  try {
+    await api(`/events/${eventId}/lots/${lotId}`, { method: 'PUT', auth: true, body: { soldOut: true } });
+    await viewEdit(eventId);
+    flash('Lote agotado');
+  } catch (err) { flash(err.message, 'err'); }
+}
+async function deleteLotBtn(eventId, lotId) {
+  if (!confirm('¿Borrar este lote?')) return;
+  try {
+    await api(`/events/${eventId}/lots/${lotId}`, { method: 'DELETE', auth: true });
+    await viewEdit(eventId);
+    flash('Lote eliminado');
+  } catch (err) { flash(err.message, 'err'); }
+}
+async function addLotBtn(eventId) {
+  try {
+    if ($('nPrice').value === '') throw new Error('Completá el precio del lote');
+    await api(`/events/${eventId}/lots`, { method: 'POST', auth: true, body: {
+      name: $('nName').value, price: Number($('nPrice').value), quantity: Number($('nQty').value),
+    }});
+    await viewEdit(eventId);
+    flash('Lote agregado');
   } catch (err) { flash(err.message, 'err'); }
 }
 
@@ -305,28 +458,50 @@ async function viewBuy(id) {
     ({ event: currentEvent } = await api('/events/' + id));
   } catch (err) { return flash(err.message, 'err'); }
   const e = currentEvent;
+  if (e.status !== 'published') return flash('Este evento no está a la venta', 'err');
+  const firstFree = e.lots.find(l => l.ticketsAvailable > 0);
   $('view').innerHTML = `
   <div class="card" style="max-width:480px;margin:auto">
     <h2>${esc(e.title)}</h2>
     <p class="muted">📅 ${new Date(e.date).toLocaleString('es-AR')} · 📍 ${esc(e.location)}</p>
     <form onsubmit="submitBuy(event)">
+      <label>Tipo de entrada</label>
+      ${e.lots.map(l => `
+        <label class="choice ${l.ticketsAvailable < 1 ? 'sold' : ''}" style="color:var(--text);font-size:1rem">
+          <input type="radio" name="bLot" value="${l.id}" ${l === firstFree ? 'checked' : ''} ${l.ticketsAvailable < 1 ? 'disabled' : ''} onchange="updTotal()">
+          <span class="grow"><b>${esc(l.name)}</b></span>
+          ${l.ticketsAvailable < 1 ? '<span class="tag soldout">Agotada</span>' : `<span class="price" style="margin:0">${money(l.price)}</span>`}
+        </label>`).join('')}
       <label>Nombre</label><input id="bName" value="${esc(state.user?.name)}" required>
       <label>Email</label><input id="bEmail" type="email" value="${esc(state.user?.email)}" required>
-      <label>Cantidad (máx. ${e.ticketsAvailable})</label>
-      <input id="bQty" type="number" min="1" max="${e.ticketsAvailable}" value="1" required oninput="updTotal()">
-      <p class="price" id="bTotal">${money(e.ticketPrice)}</p>
-      <p><button>Pagar</button> <button type="button" class="ghost" onclick="go('events')">Volver</button></p>
+      <label id="bQtyLabel">Cantidad</label>
+      <input id="bQty" type="number" min="1" value="1" required oninput="updTotal()">
+      <p class="price" id="bTotal"></p>
+      <p><button ${firstFree ? '' : 'disabled'}>Pagar</button> <button type="button" class="ghost" onclick="go('events')">Volver</button></p>
       <p class="muted">Al continuar te llevamos a la pasarela de pago. En modo de prueba el pago se aprueba automáticamente.</p>
     </form>
   </div>`;
+  updTotal();
 }
-function updTotal() { $('bTotal').textContent = money(currentEvent.ticketPrice * (Number($('bQty').value) || 0)); }
+const selectedLot = () => {
+  const r = document.querySelector('input[name="bLot"]:checked');
+  return r && currentEvent.lots.find(l => l.id === r.value);
+};
+// Actualiza el máximo y el total según el lote elegido
+function updTotal() {
+  const lot = selectedLot();
+  $('bQty').max = lot ? lot.ticketsAvailable : 0;
+  $('bQtyLabel').textContent = lot ? `Cantidad (máx. ${lot.ticketsAvailable})` : 'Cantidad';
+  $('bTotal').textContent = lot ? money(lot.price * (Number($('bQty').value) || 0)) : '';
+}
 
 async function submitBuy(ev) {
   ev.preventDefault();
   try {
+    const lot = selectedLot();
+    if (!lot) throw new Error('Elegí un tipo de entrada');
     const { purchase, checkoutUrl } = await api('/purchases/checkout', { method: 'POST', body: {
-      eventId: currentEvent.id, buyerName: $('bName').value,
+      eventId: currentEvent.id, lotId: lot.id, buyerName: $('bName').value,
       buyerEmail: $('bEmail').value, quantity: Number($('bQty').value),
     }});
     // Pasarela real: se redirige a pagar y vuelve al link de las entradas
@@ -350,7 +525,7 @@ async function viewTickets(token) {
       <div class="card">
         <h2>${esc(event.title)}</h2>
         <p class="muted">📅 ${new Date(event.date).toLocaleString('es-AR')}<br>📍 ${esc(event.location)}</p>
-        <p class="muted">${esc(purchase.buyerName)} · ${purchase.quantity} entrada(s) · ${money(purchase.totalPrice)}</p>
+        <p class="muted">${esc(purchase.buyerName)} · ${purchase.quantity} entrada(s)${purchase.lotName ? ` ${esc(purchase.lotName)}` : ''} · ${money(purchase.totalPrice)}</p>
         ${tickets.length ? '<p class="muted">Cada QR es para una persona. También te llegan por email.</p>' : '<p class="muted">El pago todavía no se confirmó.</p>'}
       </div>
       ${tickets.map((t, i) => `

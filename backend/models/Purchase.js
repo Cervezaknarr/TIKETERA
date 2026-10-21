@@ -17,6 +17,20 @@ const Purchase = sequelize.define("Purchase", {
       key: "id",
     },
   },
+  // Lote comprado. Nombre y precio unitario se guardan tal como estaban al
+  // comprar: si el organizador los edita después, las compras no cambian
+  lotId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+  },
+  lotName: {
+    type: DataTypes.STRING(60),
+    allowNull: true,
+  },
+  unitPrice: {
+    type: DataTypes.DECIMAL(10, 2),
+    allowNull: true,
+  },
   buyerEmail: {
     type: DataTypes.STRING,
     allowNull: false,

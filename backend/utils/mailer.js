@@ -63,7 +63,7 @@ const sendTicketsEmail = async ({ purchase, event, tickets }) => {
     html: `
       <div style="font-family:system-ui,sans-serif;max-width:480px;margin:auto;color:#1c1e26">
         <h2>¡Hola ${esc(purchase.buyerName)}!</h2>
-        <p>Estas son tus entradas para <b>${esc(event.title)}</b>.</p>
+        <p>Estas son tus entradas${purchase.lotName ? ` (${esc(purchase.lotName)})` : ""} para <b>${esc(event.title)}</b>.</p>
         <p style="color:#6b7080">📅 ${esc(date)}<br>📍 ${esc(event.location)}</p>
         <p>Cada QR es para una persona. Si alguien no puede escanearlo, el staff puede ingresar el código a mano.</p>
         ${ticketsHtml}

@@ -1,63 +1,102 @@
+const { Op } = require("sequelize");
 const Event = require("../models/Event");
+const Lot = require("../models/Lot");
 const User = require("../models/User");
 const Purchase = require("../models/Purchase");
 const { sequelize } = require("../config/database");
+const { parseLotInput, withLots } = require("../utils/lots");
+
+const EVENT_STATUSES = ["draft", "published", "cancelled"];
+
+const serverError = (res, error, message) => {
+  console.error(error);
+  res.status(500).json({
+    success: false,
+    message,
+    error: process.env.NODE_ENV === "development" ? error.message : undefined,
+  });
+};
 
 /**
- * @desc    Crear un nuevo evento
+ * @desc    Crear un nuevo evento con sus lotes (tipos de entrada)
  * @route   POST /api/events
  * @access  Private
+ * @body    { title, description, date, location, imageUrl?,
+ *            lots: [{ name, price, quantity }] }
+ *          Sin `lots`, `ticketPrice` + `ticketsAvailable` crean un lote "General"
  */
 const createEvent = async (req, res) => {
   try {
-    const {
-      title,
-      description,
-      date,
-      location,
-      ticketPrice,
-      ticketsAvailable,
-      imageUrl,
-    } = req.body;
+    const { title, description, date, location, imageUrl, ticketPrice, ticketsAvailable } =
+      req.body;
 
     // Verificar campos obligatorios
-    if (
-      !title ||
-      !description ||
-      !date ||
-      !location ||
-      !ticketPrice ||
-      !ticketsAvailable
-    ) {
+    if (!title || !description || !date || !location) {
       return res.status(400).json({
         success: false,
         message: "Por favor completa todos los campos obligatorios",
       });
     }
+    if (Number.isNaN(new Date(date).getTime())) {
+      return res.status(400).json({ success: false, message: "La fecha del evento no es válida" });
+    }
 
-    // Crear el evento
-    const event = await Event.create({
-      title,
-      description,
-      date,
-      location,
-      ticketPrice,
-      ticketsAvailable,
-      imageUrl,
-      userId: req.user.id, // El userId viene del middleware de autenticación
+    // Lotes: la lista nueva, o el precio y cupo únicos del formato anterior
+    let lotsInput = req.body.lots;
+    if (lotsInput === undefined && ticketPrice !== undefined && ticketsAvailable !== undefined) {
+      lotsInput = [{ name: "General", price: ticketPrice, quantity: ticketsAvailable }];
+    }
+    if (!Array.isArray(lotsInput) || lotsInput.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "El evento necesita al menos un lote de entradas",
+      });
+    }
+
+    const lotsData = [];
+    for (const input of lotsInput) {
+      const { error, data } = parseLotInput(input || {});
+      if (error) return res.status(400).json({ success: false, message: error });
+      lotsData.push(data);
+    }
+    const names = lotsData.map((l) => l.name.toLowerCase());
+    if (new Set(names).size !== names.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Hay lotes con el mismo nombre",
+      });
+    }
+
+    const event = await sequelize.transaction(async (transaction) => {
+      const created = await Event.create(
+        {
+          title,
+          description,
+          date,
+          location,
+          imageUrl,
+          userId: req.user.id, // El userId viene del middleware de autenticación
+        },
+        { transaction }
+      );
+      await Lot.bulkCreate(
+        lotsData.map((data, position) => ({
+          ...data,
+          eventId: created.id,
+          ticketsAvailable: data.quantity,
+          position,
+        })),
+        { transaction }
+      );
+      return created;
     });
 
     res.status(201).json({
       success: true,
-      event,
+      event: await withLots(event),
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      success: false,
-      message: "Error al crear el evento",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined,
-    });
+    serverError(res, error, "Error al crear el evento");
   }
 };
 
@@ -80,7 +119,7 @@ const getEventById = async (req, res) => {
     if (event) {
       res.json({
         success: true,
-        event,
+        event: await withLots(event),
       });
     } else {
       res.status(404).json({
@@ -89,12 +128,7 @@ const getEventById = async (req, res) => {
       });
     }
   } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      success: false,
-      message: "Error al obtener el evento",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined,
-    });
+    serverError(res, error, "Error al obtener el evento");
   }
 };
 
@@ -115,7 +149,7 @@ const getEvents = async (req, res) => {
     // Filtrar por fecha (eventos futuros)
     if (req.query.future === "true") {
       where.date = {
-        [sequelize.Op.gte]: new Date(),
+        [Op.gte]: new Date(),
       };
     }
 
@@ -124,7 +158,7 @@ const getEvents = async (req, res) => {
       where.status = req.query.status;
     }
 
-    const { count, rows: events } = await Event.findAndCountAll({
+    const { count, rows } = await Event.findAndCountAll({
       where,
       limit,
       offset,
@@ -139,7 +173,7 @@ const getEvents = async (req, res) => {
 
     res.json({
       success: true,
-      events,
+      events: await withLots(rows),
       pagination: {
         totalItems: count,
         totalPages: Math.ceil(count / limit),
@@ -148,17 +182,13 @@ const getEvents = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      success: false,
-      message: "Error al obtener los eventos",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined,
-    });
+    serverError(res, error, "Error al obtener los eventos");
   }
 };
 
 /**
- * @desc    Actualizar un evento
+ * @desc    Editar los datos de un evento. Solo su organizador (o un admin).
+ *          Los precios y cupos se editan en los lotes
  * @route   PUT /api/events/:id
  * @access  Private
  */
@@ -181,41 +211,40 @@ const updateEvent = async (req, res) => {
       });
     }
 
-    // Actualizar el evento
-    const {
-      title,
-      description,
-      date,
-      location,
-      ticketPrice,
-      ticketsAvailable,
-      imageUrl,
-      status,
-    } = req.body;
+    const { title, description, date, location, imageUrl, status } = req.body;
+
+    // Los textos obligatorios no pueden quedar vacíos
+    for (const [field, value] of Object.entries({ title, description, location })) {
+      if (value !== undefined && (typeof value !== "string" || !value.trim())) {
+        return res.status(400).json({
+          success: false,
+          message: "El título, la descripción y el lugar no pueden quedar vacíos",
+        });
+      }
+    }
+    if (date !== undefined && Number.isNaN(new Date(date).getTime())) {
+      return res.status(400).json({ success: false, message: "La fecha del evento no es válida" });
+    }
+    if (status !== undefined && !EVENT_STATUSES.includes(status)) {
+      return res.status(400).json({ success: false, message: "Estado del evento inválido" });
+    }
 
     // Solo actualizar los campos proporcionados
-    if (title) event.title = title;
-    if (description) event.description = description;
-    if (date) event.date = date;
-    if (location) event.location = location;
-    if (ticketPrice) event.ticketPrice = ticketPrice;
-    if (ticketsAvailable) event.ticketsAvailable = ticketsAvailable;
-    if (imageUrl) event.imageUrl = imageUrl;
-    if (status) event.status = status;
+    if (title !== undefined) event.title = title.trim();
+    if (description !== undefined) event.description = description.trim();
+    if (date !== undefined) event.date = date;
+    if (location !== undefined) event.location = location.trim();
+    if (imageUrl !== undefined) event.imageUrl = imageUrl || null;
+    if (status !== undefined) event.status = status;
 
     await event.save();
 
     res.json({
       success: true,
-      event,
+      event: await withLots(event),
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      success: false,
-      message: "Error al actualizar el evento",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined,
-    });
+    serverError(res, error, "Error al actualizar el evento");
   }
 };
 
@@ -260,20 +289,18 @@ const deleteEvent = async (req, res) => {
       });
     }
 
-    // Si no hay compras, eliminar el evento
-    await event.destroy();
+    // Si no hay compras, eliminar el evento con sus lotes
+    await sequelize.transaction(async (transaction) => {
+      await Lot.destroy({ where: { eventId: event.id }, transaction });
+      await event.destroy({ transaction });
+    });
 
     res.json({
       success: true,
       message: "Evento eliminado correctamente",
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      success: false,
-      message: "Error al eliminar el evento",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined,
-    });
+    serverError(res, error, "Error al eliminar el evento");
   }
 };
 

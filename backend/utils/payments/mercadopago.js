@@ -81,7 +81,7 @@ module.exports = {
       external_reference: String(purchase.id),
       items: [
         {
-          title: String(event.title).slice(0, 100),
+          title: [event.title, purchase.lotName].filter(Boolean).join(" - ").slice(0, 100),
           quantity: purchase.quantity,
           unit_price: Number((purchase.totalPrice / purchase.quantity).toFixed(2)),
           currency_id: "ARS",

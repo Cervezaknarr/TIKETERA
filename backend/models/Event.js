@@ -24,13 +24,16 @@ const Event = sequelize.define("Event", {
     type: DataTypes.STRING,
     allowNull: false,
   },
+  // En desuso: el precio y el cupo viven en los lotes (models/Lot.js). Las
+  // columnas siguen para no romper la base existente y los eventos viejos se
+  // migran a un lote "General" al arrancar (utils/migrateLots.js)
   ticketPrice: {
     type: DataTypes.DECIMAL(10, 2),
-    allowNull: false,
+    allowNull: true,
   },
   ticketsAvailable: {
     type: DataTypes.INTEGER,
-    allowNull: false,
+    allowNull: true,
   },
   userId: {
     type: DataTypes.UUID,
