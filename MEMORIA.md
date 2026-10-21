@@ -61,6 +61,11 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - [ ] ~~Armar un túnel (ngrok)~~ ya no hace falta: `BACKEND_URL` será la URL de Render
 - [ ] Probar una compra completa: pagar con el usuario de prueba y ver que lleguen las entradas con QR
 
+### Rama de producción (2026-10-21)
+- La rama `integracionPagos` se renombró a **`prod`**; es la que lee Render (el Blueprint ya apunta a `prod`).
+- Al cambiar la rama, el Blueprint quiso pisar `PAYMENT_PROVIDER` con `mock` (el valor de `render.yaml`) y pidió aprobación. No se aprobó: `PAYMENT_PROVIDER` quedó con `sync: false` en `render.yaml`, así que el valor del panel manda. **Si Render vuelve a pedir "Approve" por una variable, no aprobar sin mirar qué cambia.**
+- [ ] Cambiar también la rama en Settings del servicio `ticketera` y después borrar `integracionPagos` de GitHub
+
 ### Seguridad de dependencias
 - [x] `npm audit fix` aplicado en local (2026-10-20): de 13 vulnerabilidades quedan 2 moderadas en producción, ambas de `uuid`. No afectan: solo fallan en v3/v5/v6 con buffer propio y el proyecto usa v4. Arreglarlas requiere `--force` (cambio mayor), no vale la pena ahora.
 - [x] `backend/package-lock.json` commiteado y subido
