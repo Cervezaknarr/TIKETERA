@@ -443,3 +443,98 @@ test("el webhook de Mercado Pago rechaza notificaciones inválidas", async () =>
     );
   });
 });
+
+// --- Compras vencidas ---
+
+const { releaseExpiredPurchases } = require("../utils/purchases");
+
+const approvingProvider = () =>
+  setProvider({
+    name: "fake",
+    createPayment: async ({ purchase }) => ({
+      gatewayId: `fake_${purchase.id}`,
+      checkoutUrl: "https://pasarela.test/pagar",
+    }),
+    resolveWebhook: async (req) => ({ gatewayId: req.body.id, status: "approved" }),
+  });
+
+// Hace que una compra parezca creada hace `minutes` minutos
+const age = (purchase, minutes) =>
+  Purchase.update(
+    { createdAt: new Date(Date.now() - minutes * 60 * 1000) },
+    { where: { id: purchase.id }, silent: true }
+  );
+
+test("las compras pendientes vencidas liberan su cupo y las recientes no", async () => {
+  approvingProvider();
+  const event = await newEvent(10);
+  const old = (await checkout(event, 3, "Vieja")).body.purchase;
+  const recent = (await checkout(event, 2, "Reciente")).body.purchase;
+  await age({ id: old.id }, 120);
+  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 5);
+
+  assert.equal(await releaseExpiredPurchases(), 1);
+
+  assert.equal((await Purchase.findByPk(old.id)).status, "failed");
+  assert.equal((await Purchase.findByPk(recent.id)).status, "pending");
+  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 8);
+
+  // Una segunda pasada no libera dos veces
+  assert.equal(await releaseExpiredPurchases(), 0);
+  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 8);
+});
+
+test("las compras ya pagadas no se liberan aunque sean viejas", async () => {
+  approvingProvider();
+  const event = await newEvent(10);
+  const { purchase } = (await checkout(event, 2)).body;
+  await post("/api/purchases/webhook", { id: purchase.paymentGatewayId });
+  await age({ id: purchase.id }, 120);
+
+  assert.equal(await releaseExpiredPurchases(), 0);
+  assert.equal((await Purchase.findByPk(purchase.id)).status, "completed");
+  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 8);
+});
+
+test("un pago aprobado tras vencer la compra la recupera si queda cupo", async () => {
+  approvingProvider();
+  const event = await newEvent(10);
+  const { purchase } = (await checkout(event, 2)).body;
+  await age({ id: purchase.id }, 120);
+  await releaseExpiredPurchases();
+  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 10);
+
+  const res = await post("/api/purchases/webhook", { id: purchase.paymentGatewayId });
+  assert.equal(res.status, 200);
+
+  assert.equal((await Purchase.findByPk(purchase.id)).status, "completed");
+  assert.equal(await Ticket.count({ where: { purchaseId: purchase.id } }), 2);
+  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 8);
+});
+
+test("un pago aprobado tras vencer sin cupo no emite entradas y avisa", async () => {
+  approvingProvider();
+  const event = await newEvent(3);
+  const { purchase } = (await checkout(event, 3)).body;
+  await age({ id: purchase.id }, 120);
+  await releaseExpiredPurchases();
+  // Otra persona se queda con las 3 entradas
+  assert.equal((await checkout(event, 3, "Otra")).status, 201);
+
+  const errors = [];
+  const original = console.error;
+  console.error = (...args) => errors.push(args.join(" "));
+  let res;
+  try {
+    res = await post("/api/purchases/webhook", { id: purchase.paymentGatewayId });
+  } finally {
+    console.error = original;
+  }
+
+  assert.equal(res.status, 200);
+  assert.match(res.body.message, /requiere reembolso/);
+  assert.match(errors.join("\n"), /PAGO APROBADO SIN CUPO/);
+  assert.equal((await Purchase.findByPk(purchase.id)).status, "failed");
+  assert.equal(await Ticket.count({ where: { purchaseId: purchase.id } }), 0);
+  assert.equal((await Event.findByPk(event.id)).ticketsAvailable, 0);
+});

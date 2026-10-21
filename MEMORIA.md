@@ -23,7 +23,7 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - **Se pausó la prueba de pagos** hasta tener la web publicada: con una URL fija ya no hace falta ngrok.
 - El backend **sirve el frontend** (`express.static`), así que hay un solo servicio y no hace falta CORS en producción. El frontend usa su propio origen como API (antes apuntaba a `localhost:3000`).
 - `/` ahora devuelve la web; el health check pasó a `/health`.
-- `render.yaml` en la raíz: servicio web (`rootDir: backend`) + base Postgres. `PAYMENT_PROVIDER` arranca en `mock`.
+- `render.yaml` en la raíz: servicio web (`rootDir: backend`) + base Postgres, ambos en `plan: free`. `PAYMENT_PROVIDER` arranca en `mock`.
 - En local la web se abre en `http://localhost:5000` (backend), no con un servidor aparte.
 
 ## Decisiones tomadas
@@ -43,10 +43,14 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 
 ## Pendientes
 ### Publicar en Render (en curso, tiene prioridad)
-- [ ] Commitear y subir la rama a GitHub (`Cervezaknarr/TIKETERA`)
-- [ ] Render: New > Blueprint > elegir el repositorio (usa `render.yaml`)
-- [ ] Después del primer deploy, copiar la URL asignada (`https://ticketera-XXXX.onrender.com`) a `BACKEND_URL` y `FRONTEND_URL`
-- [ ] Crear el usuario organizador y el evento en la web publicada
+- [x] Commit `5ff7afd` subido a GitHub (`Cervezaknarr/TIKETERA`, rama `integracionPagos`)
+- [x] Render: Blueprint desplegado (pidió tarjeta aunque todo sea Free). URL: https://ticketera-vbdw.onrender.com (web, `/health` y `/api/events` responden 200)
+- [x] `BACKEND_URL` y `FRONTEND_URL` cargadas en Environment (el servicio responde 200 después de reiniciar)
+- [x] Evento "FIESTARDA" ya creado en la web publicada (7/11/2026, Club Universitario, $25.000, 300 entradas)
+- [x] `mock` no sirve en producción (se bloquea a propósito): se pasó directo a Mercado Pago de prueba
+- [x] Aplicación "Checkout Pro" (API de Preferences) creada en Mercado Pago; `PAYMENT_PROVIDER=mercadopago` y `MERCADOPAGO_ACCESS_TOKEN` de **prueba** cargados en Render (el token de prueba empieza con `APP_USR-`, no `TEST-`; está atado a un usuario `TESTUSER…`)
+- [x] **Compra completa probada con comprador de prueba: funciona** (pago, aviso a la web y entrada con QR)
+- [ ] Revisar las compras de prueba que quedaron en la base y el cupo del evento antes de vender de verdad
 - [ ] Revisar `sequelize.sync({ alter: true })` en `server.js`: en producción conviene migraciones; por ahora modifica tablas al arrancar
 - [ ] Plan gratis: el servidor se duerme sin tráfico y la base gratis vence; para un evento real conviene plan pago
 
@@ -57,8 +61,13 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - [ ] ~~Armar un túnel (ngrok)~~ ya no hace falta: `BACKEND_URL` será la URL de Render
 - [ ] Probar una compra completa: pagar con el usuario de prueba y ver que lleguen las entradas con QR
 
+### Seguridad de dependencias
+- [x] `npm audit fix` aplicado en local (2026-10-20): de 13 vulnerabilidades quedan 2 moderadas en producción, ambas de `uuid`. No afectan: solo fallan en v3/v5/v6 con buffer propio y el proyecto usa v4. Arreglarlas requiere `--force` (cambio mayor), no vale la pena ahora.
+- [x] `backend/package-lock.json` commiteado y subido
+
 ### Código
-- [ ] **Liberar el cupo de compras abandonadas o vencidas.** Hoy el cupo queda reservado para siempre si el comprador no paga, porque no hay ningún proceso que lo libere. Hacerlo antes de producción.
+- [x] **Liberar el cupo de compras abandonadas o vencidas** (2026-10-20, `backend/utils/purchases.js`). Cada 5 minutos el servidor pasa las compras `pending` de más de 40 minutos (`PURCHASE_HOLD_MINUTES`, la preferencia de pago vence a los 30) a `failed` y devuelve su cupo. Si un pago se aprueba después de vencer (ej. efectivo), se intenta reservar de nuevo el cupo y completar la compra; si ya no queda, **no se emiten entradas** y el log dice `PAGO APROBADO SIN CUPO` (hay que reembolsar a mano desde Mercado Pago). 37 tests pasan.
+- [ ] Mirar los logs de Render de vez en cuando buscando `PAGO APROBADO SIN CUPO`
 - [ ] Verificar que el monto pagado coincida con el de la compra al procesar el webhook
 - [ ] Probar el flujo contra el sandbox real (hasta ahora solo hay tests con la API simulada)
 - [ ] Probar la atomicidad de las compras simultáneas con Postgres (SQLite no lo permite)

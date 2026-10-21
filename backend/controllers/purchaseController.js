@@ -1,8 +1,8 @@
 const Purchase = require("../models/Purchase");
 const Event = require("../models/Event");
 const Ticket = require("../models/Ticket");
-const { Op } = require("sequelize");
 const { sequelize } = require("../config/database");
+const { releaseStock, reserveStock } = require("../utils/purchases");
 const QRCode = require("qrcode");
 const { generateTicketCode } = require("../utils/ticketCode");
 const { sendTicketsEmail } = require("../utils/mailer");
@@ -20,16 +20,6 @@ const sendPurchaseEmail = async (purchaseId) => {
   });
   await sendTicketsEmail({ purchase, event: purchase.Event, tickets });
 };
-
-/**
- * Devolver las entradas de una compra al inventario del evento
- */
-const releaseStock = (purchase, transaction) =>
-  Event.increment("ticketsAvailable", {
-    by: purchase.quantity,
-    where: { id: purchase.eventId },
-    transaction,
-  });
 
 /**
  * @desc    Crear una compra pendiente y la sesión de pago en la pasarela activa
@@ -60,17 +50,7 @@ const createCheckoutSession = async (req, res) => {
 
     // Reservar el cupo y crear la compra en una sola transacción
     const reservation = await sequelize.transaction(async (transaction) => {
-      // Descuento atómico: solo se aplica si todavía quedan entradas, así dos
-      // compras simultáneas de las últimas entradas no pueden vender de más
-      // (quantity es un entero validado, es seguro interpolarlo)
-      const [reserved] = await Event.update(
-        { ticketsAvailable: sequelize.literal(`"ticketsAvailable" - ${quantity}`) },
-        {
-          where: { id: eventId, ticketsAvailable: { [Op.gte]: quantity } },
-          transaction,
-        }
-      );
-      if (reserved === 0) return null;
+      if (!(await reserveStock(eventId, quantity, transaction))) return null;
 
       return Purchase.create(
         {
@@ -172,9 +152,16 @@ const handlePaymentWebhook = async (req, res) => {
       });
 
       if (!purchase) return "not_found";
-      if (purchase.status !== "pending") return "already_processed";
+
+      // Pago aprobado que llega después de que la compra venció y se liberó su
+      // cupo (por ejemplo, un pago en efectivo): se intenta reservar de nuevo
+      const lateApproval = status === "approved" && purchase.status === "failed";
+      if (purchase.status !== "pending" && !lateApproval) return "already_processed";
 
       if (status === "approved") {
+        if (lateApproval && !(await reserveStock(purchase.eventId, purchase.quantity, transaction))) {
+          return "paid_without_stock";
+        }
         purchase.status = "completed";
         await purchase.save({ transaction });
 
@@ -207,6 +194,18 @@ const handlePaymentWebhook = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Compra no encontrada",
+      });
+    }
+
+    if (result === "paid_without_stock") {
+      // Hay que devolverle la plata al comprador a mano. Se responde 200 para que
+      // la pasarela no siga reintentando el aviso
+      console.error(
+        `PAGO APROBADO SIN CUPO: la compra con pasarela ${paymentGatewayId} se pagó después de vencer y el evento ya no tiene entradas. Hay que reembolsarla.`
+      );
+      return res.status(200).json({
+        success: true,
+        message: "Pago aprobado sin cupo disponible: requiere reembolso",
       });
     }
 
