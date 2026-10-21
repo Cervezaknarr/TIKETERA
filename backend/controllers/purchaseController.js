@@ -1,11 +1,12 @@
 const Purchase = require("../models/Purchase");
 const Event = require("../models/Event");
 const Ticket = require("../models/Ticket");
-const { v4: uuidv4 } = require("uuid");
+const { Op } = require("sequelize");
 const { sequelize } = require("../config/database");
 const QRCode = require("qrcode");
 const { generateTicketCode } = require("../utils/ticketCode");
 const { sendTicketsEmail } = require("../utils/mailer");
+const { getProvider } = require("../utils/payments");
 
 /**
  * Enviar por email las entradas de una compra ya confirmada
@@ -21,18 +22,26 @@ const sendPurchaseEmail = async (purchaseId) => {
 };
 
 /**
- * @desc    Crear una sesión de pago (simulación de integración con pasarela de pago)
+ * Devolver las entradas de una compra al inventario del evento
+ */
+const releaseStock = (purchase, transaction) =>
+  Event.increment("ticketsAvailable", {
+    by: purchase.quantity,
+    where: { id: purchase.eventId },
+    transaction,
+  });
+
+/**
+ * @desc    Crear una compra pendiente y la sesión de pago en la pasarela activa
  * @route   POST /api/purchases/checkout
  * @access  Public
  */
 const createCheckoutSession = async (req, res) => {
-  const transaction = await sequelize.transaction();
-
   try {
     const { eventId, buyerEmail, buyerName, quantity } = req.body;
 
     // Verificar campos obligatorios
-    if (!eventId || !buyerEmail || !buyerName || !quantity || quantity < 1) {
+    if (!eventId || !buyerEmail || !buyerName || !Number.isInteger(quantity) || quantity < 1) {
       return res.status(400).json({
         success: false,
         message: "Por favor proporciona todos los campos requeridos",
@@ -49,44 +58,56 @@ const createCheckoutSession = async (req, res) => {
       });
     }
 
-    // Verificar si hay suficientes entradas disponibles
-    if (event.ticketsAvailable < quantity) {
+    // Reservar el cupo y crear la compra en una sola transacción
+    const reservation = await sequelize.transaction(async (transaction) => {
+      // Descuento atómico: solo se aplica si todavía quedan entradas, así dos
+      // compras simultáneas de las últimas entradas no pueden vender de más
+      // (quantity es un entero validado, es seguro interpolarlo)
+      const [reserved] = await Event.update(
+        { ticketsAvailable: sequelize.literal(`"ticketsAvailable" - ${quantity}`) },
+        {
+          where: { id: eventId, ticketsAvailable: { [Op.gte]: quantity } },
+          transaction,
+        }
+      );
+      if (reserved === 0) return null;
+
+      return Purchase.create(
+        {
+          eventId,
+          buyerEmail,
+          buyerName,
+          quantity,
+          totalPrice: event.ticketPrice * quantity,
+          status: "pending",
+        },
+        { transaction }
+      );
+    });
+
+    if (!reservation) {
+      const current = await Event.findByPk(eventId);
       return res.status(400).json({
         success: false,
-        message: `Solo quedan ${event.ticketsAvailable} entradas disponibles`,
+        message: `Solo quedan ${current.ticketsAvailable} entradas disponibles`,
       });
     }
+    const purchase = reservation;
 
-    // Calcular el precio total
-    const totalPrice = event.ticketPrice * quantity;
-
-    // Generar un ID único para la transacción (simula el ID de la pasarela de pago)
-    const paymentGatewayId = `mp_${uuidv4()}`;
-
-    // Crear el registro de compra con estado 'pending'
-    const purchase = await Purchase.create(
-      {
-        eventId,
-        buyerEmail,
-        buyerName,
-        quantity,
-        totalPrice,
-        status: "pending",
-        paymentGatewayId,
-      },
-      { transaction }
-    );
-
-    // Reducir el número de entradas disponibles
-    event.ticketsAvailable -= quantity;
-    await event.save({ transaction });
-
-    // Confirmar la transacción
-    await transaction.commit();
-
-    // En un entorno real, aquí se integraría con Mercado Pago
-    // Simularemos la URL de checkout
-    const checkoutUrl = `https://ejemplo-checkout.com/pay/${paymentGatewayId}`;
+    // Crear el pago en la pasarela. Si falla, se libera el cupo reservado
+    let payment;
+    try {
+      payment = await getProvider().createPayment({ purchase, event });
+      purchase.paymentGatewayId = payment.gatewayId;
+      await purchase.save();
+    } catch (error) {
+      await sequelize.transaction(async (transaction) => {
+        purchase.status = "failed";
+        await purchase.save({ transaction });
+        await releaseStock(purchase, transaction);
+      });
+      throw error;
+    }
 
     res.status(201).json({
       success: true,
@@ -100,12 +121,10 @@ const createCheckoutSession = async (req, res) => {
         paymentGatewayId: purchase.paymentGatewayId,
         accessToken: purchase.accessToken,
       },
-      checkoutUrl,
+      // URL de la pasarela a la que redirigir al comprador (null = pago simulado)
+      checkoutUrl: payment.checkoutUrl,
     });
   } catch (error) {
-    // Revertir la transacción en caso de error
-    await transaction.rollback();
-
     console.error(error);
     res.status(500).json({
       success: false,
@@ -116,22 +135,30 @@ const createCheckoutSession = async (req, res) => {
 };
 
 /**
- * @desc    Manejar el webhook de pago (simulación de respuesta de pasarela de pago)
+ * @desc    Recibir la notificación de pago de la pasarela
  * @route   POST /api/purchases/webhook
- * @access  Public
+ * @access  Public (la autenticidad la verifica la pasarela activa)
  */
 const handlePaymentWebhook = async (req, res) => {
   try {
-    // En un entorno real, aquí verificaríamos la autenticidad del webhook
-    // mediante firma o token que proporciona la pasarela de pago
+    // La pasarela verifica que la notificación sea auténtica y devuelve el
+    // estado real del pago; nunca se confía en el estado que trae el body
+    const notification = await getProvider().resolveWebhook(req);
 
-    // Obtener datos del webhook (simulados por ahora)
-    const { paymentGatewayId, status } = req.body;
-
-    if (!paymentGatewayId || !status) {
+    if (!notification) {
       return res.status(400).json({
         success: false,
-        message: "Datos del webhook incompletos",
+        message: "Notificación de pago inválida",
+      });
+    }
+
+    const { gatewayId: paymentGatewayId, status } = notification;
+
+    // Pago todavía en curso: no hay nada que hacer, la pasarela avisará después
+    if (status === "pending") {
+      return res.status(200).json({
+        success: true,
+        message: "Pago pendiente",
       });
     }
 
@@ -170,11 +197,7 @@ const handlePaymentWebhook = async (req, res) => {
         await purchase.save({ transaction });
 
         // Si el pago falló, devolver las entradas al inventario
-        await Event.increment("ticketsAvailable", {
-          by: purchase.quantity,
-          where: { id: purchase.eventId },
-          transaction,
-        });
+        await releaseStock(purchase, transaction);
       }
 
       return "processed";

@@ -68,7 +68,10 @@
 </main>
 
 <script>
-const API = (localStorage.getItem('ticketera_api') || 'http://localhost:3000') + '/api';
+// El backend sirve esta página, así que la API está en el mismo origen. Solo si se
+// abre el archivo directamente (file://) se usa el backend local
+const API = (localStorage.getItem('ticketera_api') ||
+  (location.protocol === 'file:' ? 'http://localhost:5000' : location.origin)) + '/api';
 const state = { token: localStorage.getItem('token'), user: JSON.parse(localStorage.getItem('user') || 'null') };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -313,7 +316,7 @@ async function viewBuy(id) {
       <input id="bQty" type="number" min="1" max="${e.ticketsAvailable}" value="1" required oninput="updTotal()">
       <p class="price" id="bTotal">${money(e.ticketPrice)}</p>
       <p><button>Pagar</button> <button type="button" class="ghost" onclick="go('events')">Volver</button></p>
-      <p class="muted">El pago es simulado: se aprueba automáticamente.</p>
+      <p class="muted">Al continuar te llevamos a la pasarela de pago. En modo de prueba el pago se aprueba automáticamente.</p>
     </form>
   </div>`;
 }
@@ -322,11 +325,13 @@ function updTotal() { $('bTotal').textContent = money(currentEvent.ticketPrice *
 async function submitBuy(ev) {
   ev.preventDefault();
   try {
-    const { purchase } = await api('/purchases/checkout', { method: 'POST', body: {
+    const { purchase, checkoutUrl } = await api('/purchases/checkout', { method: 'POST', body: {
       eventId: currentEvent.id, buyerName: $('bName').value,
       buyerEmail: $('bEmail').value, quantity: Number($('bQty').value),
     }});
-    // Simula la pasarela de pago confirmando el cobro
+    // Pasarela real: se redirige a pagar y vuelve al link de las entradas
+    if (checkoutUrl) { location.href = checkoutUrl; return; }
+    // Sin checkoutUrl (modo de prueba): se simula la pasarela confirmando el cobro
     await api('/purchases/webhook', { method: 'POST', body: { paymentGatewayId: purchase.paymentGatewayId, status: 'approved' } });
     go('tickets', purchase.accessToken);
     flash('¡Compra realizada! Estas son tus entradas.');
