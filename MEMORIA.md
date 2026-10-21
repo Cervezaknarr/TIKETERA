@@ -66,7 +66,8 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - [x] `backend/package-lock.json` commiteado y subido
 
 ### Código
-- [ ] **Liberar el cupo de compras abandonadas o vencidas.** Hoy el cupo queda reservado para siempre si el comprador no paga, porque no hay ningún proceso que lo libere. Hacerlo antes de producción.
+- [x] **Liberar el cupo de compras abandonadas o vencidas** (2026-10-20, `backend/utils/purchases.js`). Cada 5 minutos el servidor pasa las compras `pending` de más de 40 minutos (`PURCHASE_HOLD_MINUTES`, la preferencia de pago vence a los 30) a `failed` y devuelve su cupo. Si un pago se aprueba después de vencer (ej. efectivo), se intenta reservar de nuevo el cupo y completar la compra; si ya no queda, **no se emiten entradas** y el log dice `PAGO APROBADO SIN CUPO` (hay que reembolsar a mano desde Mercado Pago). 37 tests pasan.
+- [ ] Mirar los logs de Render de vez en cuando buscando `PAGO APROBADO SIN CUPO`
 - [ ] Verificar que el monto pagado coincida con el de la compra al procesar el webhook
 - [ ] Probar el flujo contra el sandbox real (hasta ahora solo hay tests con la API simulada)
 - [ ] Probar la atomicidad de las compras simultáneas con Postgres (SQLite no lo permite)

@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 const { sequelize, testConnection } = require('./config/database');
+const { startExpirationSweep } = require('./utils/purchases');
 
 // Importar rutas
 const authRoutes = require("./routes/authRoutes");
@@ -88,6 +89,9 @@ const startServer = async () => {
     app.listen(PORT, () => {
       console.log(`Servidor corriendo en puerto ${PORT}`);
     });
+
+    // Devolver al evento el cupo de las compras que nunca se pagaron
+    startExpirationSweep();
   } catch (error) {
     console.error("Error al iniciar el servidor:", error);
     process.exit(1);
