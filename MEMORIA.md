@@ -44,9 +44,13 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 ## Pendientes
 ### Publicar en Render (en curso, tiene prioridad)
 - [x] Commit `5ff7afd` subido a GitHub (`Cervezaknarr/TIKETERA`, rama `integracionPagos`)
-- [ ] Render: New > Blueprint > elegir el repositorio (usa `render.yaml`)
-- [ ] Después del primer deploy, copiar la URL asignada (`https://ticketera-XXXX.onrender.com`) a `BACKEND_URL` y `FRONTEND_URL`
-- [ ] Crear el usuario organizador y el evento en la web publicada
+- [x] Render: Blueprint desplegado (pidió tarjeta aunque todo sea Free). URL: https://ticketera-vbdw.onrender.com (web, `/health` y `/api/events` responden 200)
+- [x] `BACKEND_URL` y `FRONTEND_URL` cargadas en Environment (el servicio responde 200 después de reiniciar)
+- [x] Evento "FIESTARDA" ya creado en la web publicada (7/11/2026, Club Universitario, $25.000, 300 entradas)
+- [x] `mock` no sirve en producción (se bloquea a propósito): se pasó directo a Mercado Pago de prueba
+- [x] Aplicación "Checkout Pro" (API de Preferences) creada en Mercado Pago; `PAYMENT_PROVIDER=mercadopago` y `MERCADOPAGO_ACCESS_TOKEN` de **prueba** cargados en Render (el token de prueba empieza con `APP_USR-`, no `TEST-`; está atado a un usuario `TESTUSER…`)
+- [x] **Compra completa probada con comprador de prueba: funciona** (pago, aviso a la web y entrada con QR)
+- [ ] Revisar las compras de prueba que quedaron en la base y el cupo del evento antes de vender de verdad
 - [ ] Revisar `sequelize.sync({ alter: true })` en `server.js`: en producción conviene migraciones; por ahora modifica tablas al arrancar
 - [ ] Plan gratis: el servidor se duerme sin tráfico y la base gratis vence; para un evento real conviene plan pago
 
@@ -56,6 +60,10 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - [ ] Cargar el Access Token de prueba en `backend/.env` y poner `PAYMENT_PROVIDER=mercadopago`
 - [ ] ~~Armar un túnel (ngrok)~~ ya no hace falta: `BACKEND_URL` será la URL de Render
 - [ ] Probar una compra completa: pagar con el usuario de prueba y ver que lleguen las entradas con QR
+
+### Seguridad de dependencias
+- [x] `npm audit fix` aplicado en local (2026-10-20): de 13 vulnerabilidades quedan 2 moderadas en producción, ambas de `uuid`. No afectan: solo fallan en v3/v5/v6 con buffer propio y el proyecto usa v4. Arreglarlas requiere `--force` (cambio mayor), no vale la pena ahora.
+- [x] `backend/package-lock.json` commiteado y subido
 
 ### Código
 - [ ] **Liberar el cupo de compras abandonadas o vencidas.** Hoy el cupo queda reservado para siempre si el comprador no paga, porque no hay ningún proceso que lo libere. Hacerlo antes de producción.
