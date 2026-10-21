@@ -4,6 +4,7 @@ services:
   - type: web
     name: ticketera
     runtime: node
+    plan: free
     rootDir: backend
     buildCommand: npm ci --omit=dev
     startCommand: npm start

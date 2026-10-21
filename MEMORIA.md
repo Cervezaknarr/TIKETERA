@@ -23,7 +23,7 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - **Se pausó la prueba de pagos** hasta tener la web publicada: con una URL fija ya no hace falta ngrok.
 - El backend **sirve el frontend** (`express.static`), así que hay un solo servicio y no hace falta CORS en producción. El frontend usa su propio origen como API (antes apuntaba a `localhost:3000`).
 - `/` ahora devuelve la web; el health check pasó a `/health`.
-- `render.yaml` en la raíz: servicio web (`rootDir: backend`) + base Postgres. `PAYMENT_PROVIDER` arranca en `mock`.
+- `render.yaml` en la raíz: servicio web (`rootDir: backend`) + base Postgres, ambos en `plan: free`. `PAYMENT_PROVIDER` arranca en `mock`.
 - En local la web se abre en `http://localhost:5000` (backend), no con un servidor aparte.
 
 ## Decisiones tomadas
@@ -43,7 +43,7 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 
 ## Pendientes
 ### Publicar en Render (en curso, tiene prioridad)
-- [ ] Commitear y subir la rama a GitHub (`Cervezaknarr/TIKETERA`)
+- [x] Commit `5ff7afd` subido a GitHub (`Cervezaknarr/TIKETERA`, rama `integracionPagos`)
 - [ ] Render: New > Blueprint > elegir el repositorio (usa `render.yaml`)
 - [ ] Después del primer deploy, copiar la URL asignada (`https://ticketera-XXXX.onrender.com`) a `BACKEND_URL` y `FRONTEND_URL`
 - [ ] Crear el usuario organizador y el evento en la web publicada
