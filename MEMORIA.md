@@ -66,6 +66,19 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - Al cambiar la rama, el Blueprint quiso pisar `PAYMENT_PROVIDER` con `mock` (el valor de `render.yaml`) y pidió aprobación. No se aprobó: `PAYMENT_PROVIDER` quedó con `sync: false` en `render.yaml`, así que el valor del panel manda. **Si Render vuelve a pedir "Approve" por una variable, no aprobar sin mirar qué cambia.**
 - [ ] Cambiar también la rama en Settings del servicio `ticketera` y después borrar `integracionPagos` de GitHub
 
+### MODO como pasarela (2026-10-21, rama `agregandoModo`)
+- Proveedor nuevo `modo` (`backend/utils/payments/modo.js`), según https://merchants.modo.com.ar/docs/1e2aa881-a70d-4a1d-a8c5-51d1fdbb8e08 (Botón de Pago, SDK v2): token (dura una semana, se reutiliza) → payment request → el comprador va al site de MODO → webhook firmado → se confirma con `GET /v2/payment-requests/{id}/data`.
+- El webhook se verifica con la firma JWS contra las claves de MODO (JWKS, se descargan una vez) y el cuerpo no puede diferir de lo firmado. Los estados finales (ACCEPTED/REJECTED) se confirman contra la API.
+- El `gatewayId` es el id de la payment request de MODO; el `external_intention_id` es el id de la compra.
+- Una payment request dura **10 minutos máximo** y un rechazo la termina: rechazado = compra fallida (hay que empezar otra). Con MODO conviene `PURCHASE_HOLD_MINUTES=15`.
+- Monto mínimo de MODO: $30. Variables: `MODO_ENV` (preprod/production), `MODO_USERNAME`, `MODO_PASSWORD`, `MODO_PROCESSOR_CODE`, `MODO_CC_CODE`, `MODO_MERCHANT_NAME`, `BACKEND_URL`.
+- La pantalla de entradas ahora muestra "Estamos confirmando tu pago…" y se actualiza sola (cada 3 s, hasta 1 minuto) al volver de la pasarela; si el pago falló lo dice.
+- 7 tests nuevos (`test/modo.test.js`, con firmas RSA reales); 44 en total pasan.
+- **MODO no se probó contra su API real.** La forma exacta del cuerpo del webhook no está en la documentación (el id se lee de `id`, `payment_request_id` o `paymentRequestId` del payload firmado); hay que probarlo en preprod y ajustar si hace falta.
+- **Para producción MODO exige estar dado de alta en un gateway de pago (Decidir, Getnet, IPG o Line), lo que normalmente requiere CUIT.** Las credenciales de test genéricas están en la documentación ("Credenciales de integración").
+- [ ] Probar en preprod con las credenciales de test y un túnel o la URL pública (`BACKEND_URL`)
+- [ ] Fusionar `agregandoModo` con `prod` cuando esté probado
+
 ### Seguridad de dependencias
 - [x] `npm audit fix` aplicado en local (2026-10-20): de 13 vulnerabilidades quedan 2 moderadas en producción, ambas de `uuid`. No afectan: solo fallan en v3/v5/v6 con buffer propio y el proyecto usa v4. Arreglarlas requiere `--force` (cambio mayor), no vale la pena ahora.
 - [x] `backend/package-lock.json` commiteado y subido

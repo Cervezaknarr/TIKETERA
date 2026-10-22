@@ -339,9 +339,9 @@ async function submitBuy(ev) {
 }
 
 // ---------- Mis entradas (link privado de la compra) ----------
-async function viewTickets(token) {
+async function viewTickets(token, tries = 0) {
   history.replaceState(null, '', '#/entradas/' + token);
-  $('view').innerHTML = '<p class="muted">Cargando…</p>';
+  if (!tries) $('view').innerHTML = '<p class="muted">Cargando…</p>';
   try {
     const { purchase, event, tickets } = await api('/purchases/tickets/' + encodeURIComponent(token));
     const statusText = { valid: 'Válida', used: 'Ya ingresó', void: 'Anulada' };
@@ -351,7 +351,9 @@ async function viewTickets(token) {
         <h2>${esc(event.title)}</h2>
         <p class="muted">📅 ${new Date(event.date).toLocaleString('es-AR')}<br>📍 ${esc(event.location)}</p>
         <p class="muted">${esc(purchase.buyerName)} · ${purchase.quantity} entrada(s) · ${money(purchase.totalPrice)}</p>
-        ${tickets.length ? '<p class="muted">Cada QR es para una persona. También te llegan por email.</p>' : '<p class="muted">El pago todavía no se confirmó.</p>'}
+        ${tickets.length ? '<p class="muted">Cada QR es para una persona. También te llegan por email.</p>'
+          : purchase.status === 'failed' ? '<p class="msg err">El pago no se completó. Volvé a los eventos para intentarlo de nuevo.</p>'
+          : '<p class="muted">Estamos confirmando tu pago… esta página se actualiza sola.</p>'}
       </div>
       ${tickets.map((t, i) => `
       <div class="card ticket" style="margin-top:14px">
@@ -361,6 +363,10 @@ async function viewTickets(token) {
       </div>`).join('')}
       <p style="text-align:center"><button class="ghost" onclick="go('events')">Volver a eventos</button></p>
     </div>`;
+    // Al volver de la pasarela el aviso del pago puede tardar unos segundos: se reintenta solo
+    if (!tickets.length && purchase.status === 'pending' && tries < 20) {
+      setTimeout(() => { if (location.hash === '#/entradas/' + token) viewTickets(token, tries + 1); }, 3000);
+    }
   } catch (err) { $('view').innerHTML = ''; flash(err.message, 'err'); }
 }
 

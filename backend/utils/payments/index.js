@@ -7,6 +7,7 @@ const providers = {
   mock: () => require("./mock"),
   nave: () => require("./nave"),
   mercadopago: () => require("./mercadopago"),
+  modo: () => require("./modo"),
 };
 
 let override = null;
