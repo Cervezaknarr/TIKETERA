@@ -76,8 +76,8 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - 7 tests nuevos (`test/modo.test.js`, con firmas RSA reales); 44 en total pasan.
 - **MODO no se probó contra su API real.** La forma exacta del cuerpo del webhook no está en la documentación (el id se lee de `id`, `payment_request_id` o `paymentRequestId` del payload firmado); hay que probarlo en preprod y ajustar si hace falta.
 - **Para producción MODO exige estar dado de alta en un gateway de pago (Decidir, Getnet, IPG o Line), lo que normalmente requiere CUIT.** Las credenciales de test genéricas están en la documentación ("Credenciales de integración").
-- [ ] Probar en preprod con las credenciales de test y un túnel o la URL pública (`BACKEND_URL`)
-- [ ] Fusionar `agregandoModo` con `prod` cuando esté probado
+- **EN PAUSA (decisión del usuario, 2026-10-21).** El código quedó terminado y subido en `agregandoModo` (88462f6) pero no se fusionó a `prod` ni se probó contra MODO.
+- Para retomar: [ ] probar en preprod con las credenciales de test y la URL pública (`BACKEND_URL`); [ ] fusionar `agregandoModo` con `prod` cuando esté probado; para cobrar de verdad hace falta alta en un gateway (normalmente con CUIT)
 
 ### Seguridad de dependencias
 - [x] `npm audit fix` aplicado en local (2026-10-20): de 13 vulnerabilidades quedan 2 moderadas en producción, ambas de `uuid`. No afectan: solo fallan en v3/v5/v6 con buffer propio y el proyecto usa v4. Arreglarlas requiere `--force` (cambio mayor), no vale la pena ahora.
