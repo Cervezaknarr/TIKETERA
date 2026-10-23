@@ -24,8 +24,10 @@ services:
         sync: false
       - key: FRONTEND_URL
         sync: false
+      # Se configura a mano en el panel de Render (hoy: mercadopago). Con un valor
+      # fijo acá, cada sync del Blueprint lo volvería a pisar
       - key: PAYMENT_PROVIDER
-        value: mock
+        sync: false
       - key: MERCADOPAGO_ACCESS_TOKEN
         sync: false
       - key: RESEND_API_KEY
