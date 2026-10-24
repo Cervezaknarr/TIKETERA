@@ -3,9 +3,8 @@ const Lot = require("../models/Lot");
 const Purchase = require("../models/Purchase");
 const { sequelize } = require("../config/database");
 
-// Las preferencias de pago vencen a los 30 minutos; el margen cubre pagos que
-// se están acreditando justo en ese momento
-const DEFAULT_HOLD_MINUTES = 40;
+const { holdMinutes } = require("./paymentWindow");
+
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
@@ -38,8 +37,6 @@ const reserveStock = async (lotId, quantity, transaction) => {
   );
   return reserved > 0;
 };
-
-const holdMinutes = () => Number(process.env.PURCHASE_HOLD_MINUTES) || DEFAULT_HOLD_MINUTES;
 
 /**
  * Cancelar las compras que siguen pendientes pasado el tiempo de pago y

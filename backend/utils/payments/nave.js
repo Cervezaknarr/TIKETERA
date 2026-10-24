@@ -23,8 +23,7 @@ const ENVIRONMENTS = {
   },
 };
 
-// Tiempo que tiene el comprador para pagar antes de que expire la intención
-const PAYMENT_DURATION_SECONDS = 30 * 60;
+const { paymentWindowMinutes } = require("../paymentWindow");
 
 // Estados de un pago de Nave -> estados internos.
 // REJECTED queda como "pending" a propósito: Nave permite reintentar el pago
@@ -163,7 +162,7 @@ module.exports = {
         user_email: purchase.buyerEmail,
       },
       additional_info: { callback_url: returnUrl(purchase) },
-      duration_time: PAYMENT_DURATION_SECONDS,
+      duration_time: paymentWindowMinutes() * 60,
     };
 
     const data = await authorizedRequest(

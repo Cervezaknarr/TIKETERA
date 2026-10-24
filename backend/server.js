@@ -5,6 +5,7 @@ require('dotenv').config();
 const { sequelize, testConnection } = require('./config/database');
 const { startExpirationSweep } = require('./utils/purchases');
 const { migrateEventsToLots } = require('./utils/migrateLots');
+const { checkoutLimiter, authLimiter } = require('./middleware/rateLimit');
 
 // Importar rutas
 const authRoutes = require("./routes/authRoutes");
@@ -16,6 +17,13 @@ const checkinRoutes = require("./routes/checkinRoutes");
 const app = express();
 
 // Middlewares
+// Detrás del proxy del host (Render) la IP real del cliente viene en
+// X-Forwarded-For. Sin esto, los límites por IP verían a todos como una sola IP.
+// TRUST_PROXY = cantidad de proxies delante del servidor (0 para desactivarlo)
+const trustProxy = process.env.TRUST_PROXY;
+if (trustProxy !== undefined) app.set("trust proxy", Number(trustProxy));
+else if (process.env.NODE_ENV === "production") app.set("trust proxy", 1);
+
 // El frontend se sirve desde este mismo servidor, así que en producción no hace
 // falta CORS. Se habilita solo si CORS_ORIGIN lista orígenes (separados por coma)
 // o fuera de producción, para abrir el frontend desde otro puerto
@@ -36,8 +44,10 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 // Configurar rutas
-app.use("/api/auth", authRoutes);
+// Límites por IP. El webhook de pago NO se limita: llega desde la pasarela
+app.use("/api/auth", authLimiter(), authRoutes);
 app.use("/api/events", eventRoutes);
+app.use("/api/purchases/checkout", checkoutLimiter());
 app.use("/api/purchases", purchaseRoutes);
 app.use("/api/checkin", checkinRoutes);
 
@@ -80,10 +90,12 @@ const startServer = async () => {
     // Verificar la conexión a la base de datos
     await testConnection();
 
-    // Sincronizar modelos con la base de datos
-    // En producción, probablemente quieras usar migraciones en lugar de sync
-    // Para desarrollo, puedes usar { force: true } para recrear las tablas
-    await sequelize.sync({ alter: true });
+    // Sincronizar modelos con la base de datos. `alter` modifica las tablas
+    // existentes para que coincidan con los modelos: es lo que crea los lotes en una
+    // base vieja, pero en Postgres repetirlo en cada arranque es riesgoso (puede
+    // duplicar índices). Tras desplegar un cambio de modelos, poné
+    // DB_SYNC_ALTER=false para que los reinicios solo creen las tablas faltantes
+    await sequelize.sync({ alter: process.env.DB_SYNC_ALTER !== "false" });
     console.log("Base de datos sincronizada correctamente");
 
     // Eventos anteriores a los lotes: pasan a tener un lote "General"

@@ -1,3 +1,4 @@
+const { Op } = require("sequelize");
 const Purchase = require("../models/Purchase");
 const Event = require("../models/Event");
 const Lot = require("../models/Lot");
@@ -53,6 +54,34 @@ const createCheckoutSession = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Este evento no está a la venta",
+      });
+    }
+
+    // Topes contra el acaparamiento: sin ellos, una sola compra o un bot podría
+    // dejar el evento "agotado" reservando todo sin pagar
+    const maxPerPurchase = Number(process.env.MAX_TICKETS_PER_PURCHASE) || 10;
+    if (quantity > maxPerPurchase) {
+      return res.status(400).json({
+        success: false,
+        message: `Podés comprar hasta ${maxPerPurchase} entradas por compra`,
+      });
+    }
+    const maxPending = Number(process.env.MAX_PENDING_PER_EMAIL) || 5;
+    const pendingForEmail = await Purchase.count({
+      where: {
+        eventId,
+        status: "pending",
+        [Op.and]: sequelize.where(
+          sequelize.fn("lower", sequelize.col("buyerEmail")),
+          String(buyerEmail).toLowerCase()
+        ),
+      },
+    });
+    if (pendingForEmail >= maxPending) {
+      return res.status(429).json({
+        success: false,
+        message:
+          "Tenés varias compras sin terminar de pagar. Completalas o esperá unos minutos para volver a intentar",
       });
     }
 

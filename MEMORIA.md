@@ -69,6 +69,14 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - Reglas: no se puede asignar menos de lo ya vendido o reservado; un lote con compras no se borra (se agota); el evento siempre tiene al menos un lote; un evento en borrador o cancelado no vende.
 - Frontend: crear evento con lotes, pantalla "Editar" (datos del evento + lotes con Guardar / Agotar / Borrar / Agregar), listado con lotes y etiqueta "Agotada", compra eligiendo lote, columna de lote en compradores y CSV. Probado en el navegador con un servidor local.
 - 53 tests pasan (16 nuevos en `test/lots.test.js`).
+- **Preparación para el día del evento (1200 personas, ~80% de las compras el mismo día, validación en 2 h):** la arquitectura actual (Node + Postgres) alcanza; los riesgos son de infraestructura y de la puerta. El usuario ya decidió pagar Render y el email, y el escáner con cámara lo hace otro dev. Hecho en `haciendoLotes`:
+  - La ventana de pago es de **15 minutos** (`PAYMENT_WINDOW_MINUTES`, antes 30) y el cupo se retiene ventana + 5 = **20 min** (`PURCHASE_HOLD_MINUTES`, antes 40): cerca del agotamiento, las compras sin pagar liberan cupo antes. `utils/paymentWindow.js` es la única fuente.
+  - Topes contra acaparamiento: máximo **10 entradas por compra** (`MAX_TICKETS_PER_PURCHASE`) y máximo **5 compras pendientes por email y evento** (`MAX_PENDING_PER_EMAIL`, sin distinguir mayúsculas; responde 429).
+  - Límite por IP: **60 compras cada 10 min** y **30 intentos de login/registro cada 15 min** (`RATE_LIMIT_CHECKOUT_MAX`, `RATE_LIMIT_AUTH_MAX`; 0 = sin límite). El webhook de pago no se limita. `trust proxy` = 1 en producción (`TRUST_PROXY`).
+  - `DB_SYNC_ALTER=false` hace que los reinicios no modifiquen tablas existentes (en Postgres repetir `alter` puede duplicar índices). **Plan:** dejarlo en true para el primer deploy con lotes y ponerlo en false después.
+  - 61 tests pasan (8 nuevos en `test/limits.test.js`).
+- [ ] **Verificar `trust proxy` en Render:** si la cantidad de proxies es otra, todos los compradores compartirían un mismo límite por IP. Si aparecen compradores con "demasiados intentos", poner `RATE_LIMIT_CHECKOUT_MAX=0` y revisar `TRUST_PROXY`. Ojo: varias personas con datos móviles comparten IP.
+- [ ] Prueba de carga con Postgres (simular decenas de compras simultáneas) antes del día del evento
 - [ ] **Sin probar en Postgres:** al desplegar, `sync({ alter: true })` crea la tabla `Lots`, agrega columnas a `Purchases` y relaja `Events.ticketPrice/ticketsAvailable`; luego corre la migración de FIESTARDA. Revisar los logs de Render después del primer deploy (buscar "Eventos migrados a lotes").
 - [ ] Fusionar `haciendoLotes` con `prod` y `main` cuando el usuario lo decida
 

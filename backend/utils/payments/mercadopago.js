@@ -11,9 +11,9 @@
 
 const { request } = require("./http");
 
+const { paymentWindowMinutes } = require("../paymentWindow");
+
 const API = "https://api.mercadopago.com";
-// Tiempo que tiene el comprador para pagar antes de que venza la preferencia
-const PAYMENT_DURATION_MS = 30 * 60 * 1000;
 
 // Estados de un pago de Mercado Pago -> estados internos.
 // "rejected" queda como "pending" a propósito: el comprador puede reintentar con
@@ -90,7 +90,7 @@ module.exports = {
       payer: { name: purchase.buyerName, email: purchase.buyerEmail },
       back_urls: { success: returnUrl, pending: returnUrl, failure: returnUrl },
       expires: true,
-      expiration_date_to: new Date(Date.now() + PAYMENT_DURATION_MS).toISOString(),
+      expiration_date_to: new Date(Date.now() + paymentWindowMinutes() * 60 * 1000).toISOString(),
     };
     // Mercado Pago solo acepta auto_return con back_urls https
     if (frontend.startsWith("https://")) payload.auto_return = "approved";
