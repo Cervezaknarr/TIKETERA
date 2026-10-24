@@ -5,8 +5,17 @@ Registro vivo de lo que se hizo, las decisiones tomadas y lo que falta. Se actua
 ## Qué es
 Plataforma de venta de entradas para eventos con QR y control de acceso.
 - **Backend** (`backend/`): Node.js, Express, Sequelize. PostgreSQL en producción, SQLite en memoria para tests.
-- **Frontend** (`frontend/index.html`): una sola página.
-- Rama de trabajo actual: `integracionPagos`.
+- **Frontend** (`frontend/`): tres sitios servidos por el mismo backend: `/` visitantes (compran), `/staff` escáner de QR, `/admin` panel (eventos, lotes, compradores, personal). Estilos y utilidades compartidos en `styles.css` y `common.js`.
+
+## Estado actual (2026-10-24)
+- **`main` y `prod` están en el mismo commit** (33f583b o posterior). **Render despliega `prod`** (https://ticketera-vbdw.onrender.com); cada push a `prod` redespliega.
+- En producción: lotes (tipos de entrada) y edición de eventos, topes y límites por IP, escáner de QR por cámara y roles (admin / staff) de Alva, pagos con **Mercado Pago de prueba**.
+- **Planes pagos de Render ya contratados:** servicio web `0.5c-512mb` y base `0.1c-256mb` (Render nombra los planes por CPU y memoria; `free` es el gratis). `render.yaml` refleja esos nombres.
+- **Pausado, no está en prod:** MODO (rama `agregandoModo`; exige alta en un gateway de pago, normalmente con CUIT). Talo Pay (transferencias; acepta personas físicas) se investigó, no se implementó.
+- **Ramas viejas** que se conservan: `integracionPagos` (el usuario pidió no borrarla), `haciendoLotes`, `integracion-staff-lotes`, `staff-admin-roles`, `agregandoModo`.
+- **Pendientes del usuario en Render:** reactivar la tarjeta (estaba pausada) antes del cobro mensual; borrar `ADMIN_PASSWORD` (ya entró a `/admin`); `DB_SYNC_ALTER=false` cuando la estructura de la base esté estable (antes de abrir ventas).
+- **Pendientes técnicos principales:** modo sin conexión del escáner y probarlo en celulares reales (Alva); verificar `trust proxy` y el límite por IP en Render; prueba de carga; pasar Mercado Pago a credenciales de producción; limpiar los índices duplicados viejos de Postgres.
+- Las secciones de abajo son el historial: algunos pendientes viejos ya se resolvieron y están marcados.
 
 ## Historial
 | Fecha | Qué se hizo |
@@ -53,14 +62,14 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - [ ] Revisar las compras de prueba que quedaron en la base y el cupo del evento antes de vender de verdad
 - [ ] Revisar `sequelize.sync({ alter: true })` en `server.js`: en producción conviene migraciones; por ahora modifica tablas al arrancar
   - En local con SQLite ya rompe: con datos cargados, `alter` intenta recrear `Users` y falla por las claves foráneas (`SQLITE_CONSTRAINT` en `DROP TABLE Users`), así que el servidor no arranca con `datos-local/ticketera.sqlite`. Pasa también sin los cambios de roles. Mientras tanto, probar en local con una base nueva.
-- [ ] Plan gratis: el servidor se duerme sin tráfico y la base gratis vence; para un evento real conviene plan pago
+- [x] Plan gratis: el servidor se duerme y la base gratis vence; **resuelto el 2026-10-24: planes pagos contratados**
 
-### Para probar Mercado Pago (pausado hasta publicar; los hace el usuario)
-- [ ] Crear la aplicación "Checkout Pro" en mercadopago.com.ar/developers
-- [ ] Crear dos usuarios de prueba (vendedor y comprador)
-- [ ] Cargar el Access Token de prueba en `backend/.env` y poner `PAYMENT_PROVIDER=mercadopago`
+### Para probar Mercado Pago (HECHO: compra de prueba completa probada en la web publicada)
+- [x] Crear la aplicación "Checkout Pro" en mercadopago.com.ar/developers
+- [x] Crear dos usuarios de prueba (vendedor y comprador)
+- [x] Cargar el Access Token de prueba en `backend/.env` y poner `PAYMENT_PROVIDER=mercadopago`
 - [ ] ~~Armar un túnel (ngrok)~~ ya no hace falta: `BACKEND_URL` será la URL de Render
-- [ ] Probar una compra completa: pagar con el usuario de prueba y ver que lleguen las entradas con QR
+- [x] Probar una compra completa: pagar con el usuario de prueba y ver que lleguen las entradas con QR
 
 ### Lotes (tipos de entrada) y edición de eventos (2026-10-21, rama `haciendoLotes`)
 - Nuevo modelo `Lot` (`backend/models/Lot.js`): nombre, precio, `quantity` (asignada) y `ticketsAvailable` (lo que queda). Ej.: EARLY, VIP, General, Jugador. **Agotada = `ticketsAvailable` 0.**
@@ -85,7 +94,7 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
   - **Hallazgo:** con `sync({ alter: true })` cada arranque agrega **un índice único duplicado** por tabla (Purchases, Tickets, Users). Con `DB_SYNC_ALTER=false` los reinicios no agregan nada. La base real de Render ya acumula duplicados de sus reinicios anteriores (inofensivos pero evitables).
   - No cubierto: la versión exacta de Postgres de Render, ni carga real sobre su hardware.
 - **Plan de despliegue de los lotes:** 1) hacer una copia de seguridad de la base en Render; 2) fusionar `haciendoLotes` a `prod` (arranca con alter activo: crea `Lots` y migra FIESTARDA); 3) revisar los logs: "Eventos migrados a lotes: 1"; 4) agregar `DB_SYNC_ALTER=false` en las variables de Render para que los reinicios no sigan duplicando índices. Opcional más adelante: borrar los índices duplicados existentes.
-- [ ] Fusionar `haciendoLotes` con `prod` y `main` cuando el usuario lo decida
+- [x] `haciendoLotes` fusionada a `prod` y `main` (24/10)
 
 ### Rama de producción (2026-10-21)
 - La rama `integracionPagos` se renombró a **`prod`**; es la que lee Render (el Blueprint ya apunta a `prod`).
@@ -109,9 +118,9 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - [ ] Publicar el backend con una dirección fija (sin túnel)
 - [ ] Cambiar el token de prueba por el de producción de la cuenta que cobre
 - [ ] Configurar `RESEND_API_KEY` con un dominio verificado para activar el email
-- [ ] Commitear el trabajo de la rama `integracionPagos` (hoy hay cambios sin commitear)
+- [x] Trabajo de `integracionPagos` commiteado y fusionado
 
-### Fusión de lotes + escáner/roles (2026-10-24, rama local `integracion-staff-lotes`, sin subir)
+### Fusión de lotes + escáner/roles (2026-10-24, rama `integracion-staff-lotes`; YA SUBIDA Y FUSIONADA a `prod` y `main`)
 - Se fusionó `origin/staff-admin-roles` (AlvaGoncalves) sobre `prod`. Conflictos: `purchaseController.js` (se dejó mi bloque, que ya incluye el control de estado), `server.js` (se conservaron ambos: migración de lotes + `ensureAdmin`), `eventRoutes.js` (las rutas de lotes pasaron a `protect, admin`) y `frontend/index.html`.
 - Los lotes se llevaron al frontend nuevo: sitio público (`/`) lista lotes con "Agotada" y la compra elige lote; **`/admin`** crea eventos con lotes y la edición muestra datos del evento + lotes (guardar, agotar, borrar, agregar), compradores con columna de lote y CSV con lote. Estilos de lotes en `frontend/styles.css`.
 - Con el modelo de roles solo el `admin` crea/edita eventos y lotes; el staff solo valida (403 en lo demás, 401 sin sesión). Mis tests de lotes se adaptaron (admin = dueño, staff = el otro usuario).
@@ -119,7 +128,7 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - **Al desplegar hay que cargar en Render `ADMIN_EMAIL` y `ADMIN_PASSWORD`** (sin eso nadie crea eventos; las cuentas viejas de tipo "usuario" ya no entran). Con el email de la cuenta actual, se la pasa a admin sin tocar su contraseña. Después borrar `ADMIN_PASSWORD`.
 - Pendientes heredados de la rama del escáner: modo sin conexión del escáner; decidir si el staff debe recibir nombre y email de los compradores en el sync; probar `/staff` en celulares reales (la cámara solo funciona con https).
 - No probado: esta fusión contra Postgres (la migración de lotes ya se probó por separado).
-- [ ] Decidir cuándo subir `integracion-staff-lotes` y fusionarla a `prod` y `main` (el usuario lo pide explícitamente)
+- [x] `integracion-staff-lotes` subida y llevada a `prod` y `main` (el usuario lo pidió explícitamente). Verificado en producción: `/`, `/admin/`, `/staff/` responden, el registro público ya no existe (404) y FIESTARDA conservó su lote.
 
 ### Escáner de QR y roles (2026-10-24)
 - [x] **Tres sitios** servidos por el mismo backend, con estilos (`frontend/styles.css`) y utilidades (`frontend/common.js`) compartidos:
@@ -135,9 +144,9 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - [x] Escáner: usa `BarcodeDetector` (Chrome/Android) o `jsQR` 1.4.0 (Apache-2.0, copiado en `frontend/vendor/`). Resultado en grande con pitido y vibración, sigue solo a los 2,5 s, contador de ingresos y carga manual del código. La cámara solo funciona con https o localhost.
 - [x] Al editar un evento, el cupo solo se manda si el admin lo cambió, para no pisar las ventas hechas con el formulario abierto.
 - 46 tests pasan (nuevo `backend/test/roles.test.js`).
-- [ ] **Render**: cargar `ADMIN_EMAIL` y `ADMIN_PASSWORD` en Environment antes o después del deploy. Una vez creado el admin, borrar `ADMIN_PASSWORD` del panel.
+- [x] **Render**: `ADMIN_EMAIL` y `ADMIN_PASSWORD` cargados; el usuario ya entró a `/admin`. [ ] Falta borrar `ADMIN_PASSWORD` del panel de Render.
 - [ ] [SEGURIDAD] El sync del escáner le manda al dispositivo del staff la lista de entradas con nombre y email de cada comprador (pensado para el modo sin conexión). Decidir si el staff debe ver esos datos.
-- [ ] [SEGURIDAD] El login no tiene límite de intentos, y los tokens duran 30 días.
+- [x] [SEGURIDAD] El login ahora tiene límite por IP (30 intentos cada 15 min, `RATE_LIMIT_AUTH_MAX`). [ ] Los tokens siguen durando 30 días.
 - [ ] Modo sin conexión en el escáner (el backend ya lo soporta).
 - [ ] Probar `/staff` en celulares reales (Android e iPhone) y `/admin` en el navegador antes de la fiesta.
 
