@@ -6,14 +6,14 @@ const {
   getEventPurchases,
   getPurchaseTickets,
 } = require("../controllers/purchaseController");
-const { protect } = require("../middleware/authMiddleware");
+const { protect, admin } = require("../middleware/authMiddleware");
 
 // Rutas públicas
 router.post("/checkout", createCheckoutSession);
 router.post("/webhook", handlePaymentWebhook);
 router.get("/tickets/:accessToken", getPurchaseTickets);
 
-// Rutas protegidas
-router.get("/event/:eventId", protect, getEventPurchases);
+// Rutas de administración
+router.get("/event/:eventId", protect, admin, getEventPurchases);
 
 module.exports = router;

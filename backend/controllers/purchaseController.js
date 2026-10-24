@@ -48,6 +48,14 @@ const createCheckoutSession = async (req, res) => {
       });
     }
 
+    // Borradores y eventos cancelados no se venden
+    if (event.status !== "published") {
+      return res.status(400).json({
+        success: false,
+        message: "Este evento no tiene entradas a la venta",
+      });
+    }
+
     // Reservar el cupo y crear la compra en una sola transacción
     const reservation = await sequelize.transaction(async (transaction) => {
       if (!(await reserveStock(eventId, quantity, transaction))) return null;

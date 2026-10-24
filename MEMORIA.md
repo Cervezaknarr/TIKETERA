@@ -52,6 +52,7 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - [x] **Compra completa probada con comprador de prueba: funciona** (pago, aviso a la web y entrada con QR)
 - [ ] Revisar las compras de prueba que quedaron en la base y el cupo del evento antes de vender de verdad
 - [ ] Revisar `sequelize.sync({ alter: true })` en `server.js`: en producción conviene migraciones; por ahora modifica tablas al arrancar
+  - En local con SQLite ya rompe: con datos cargados, `alter` intenta recrear `Users` y falla por las claves foráneas (`SQLITE_CONSTRAINT` en `DROP TABLE Users`), así que el servidor no arranca con `datos-local/ticketera.sqlite`. Pasa también sin los cambios de roles. Mientras tanto, probar en local con una base nueva.
 - [ ] Plan gratis: el servidor se duerme sin tráfico y la base gratis vence; para un evento real conviene plan pago
 
 ### Para probar Mercado Pago (pausado hasta publicar; los hace el usuario)
@@ -82,6 +83,26 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - [ ] Cambiar el token de prueba por el de producción de la cuenta que cobre
 - [ ] Configurar `RESEND_API_KEY` con un dominio verificado para activar el email
 - [ ] Commitear el trabajo de la rama `integracionPagos` (hoy hay cambios sin commitear)
+
+### Escáner de QR y roles (2026-10-24)
+- [x] **Tres sitios** servidos por el mismo backend, con estilos (`frontend/styles.css`) y utilidades (`frontend/common.js`) compartidos:
+  - `/` **visitantes**: ven eventos publicados, compran sin cuenta y ven sus entradas con el link privado. No hay login ni registro.
+  - `/staff` **personal de la puerta**: login y escáner de QR, nada más.
+  - `/admin` **administrador**: crear y editar eventos (incluido el estado), compradores con estadísticas y CSV, y alta/baja/cambio de contraseña del staff.
+- [x] **Permisos en el backend** (la URL separada es orden, la seguridad está en las rutas):
+  - Eventos POST/PUT/DELETE y listado de compras: solo `admin`. Check-in y estadísticas de ingreso: `staff` o `admin` (ya no vale ser "organizador" del evento).
+  - `/api/auth/register` eliminado. El login rechaza (403) las cuentas `user` que quedaron del registro anterior.
+  - `/api/users` (solo admin): listar personal, crear staff (siempre con rol `staff`, contraseña de 8 o más caracteres), cambiar nombre o contraseña y borrar. Los admin no se modifican ni se borran desde la API. Al borrar un staff su sesión se corta en el acto (el middleware busca al usuario en cada request).
+  - La compra rechaza eventos que no estén `published` (borrador o cancelado).
+- [x] **Primer admin**: al arrancar, si está `ADMIN_EMAIL`, se crea con `ADMIN_PASSWORD` (8 o más caracteres). Si el email ya existe, se lo pasa a admin sin tocar su contraseña. Se eligió así porque el plan gratis de Render no tiene consola. Variables agregadas a `render.yaml` con `sync: false`.
+- [x] Escáner: usa `BarcodeDetector` (Chrome/Android) o `jsQR` 1.4.0 (Apache-2.0, copiado en `frontend/vendor/`). Resultado en grande con pitido y vibración, sigue solo a los 2,5 s, contador de ingresos y carga manual del código. La cámara solo funciona con https o localhost.
+- [x] Al editar un evento, el cupo solo se manda si el admin lo cambió, para no pisar las ventas hechas con el formulario abierto.
+- 46 tests pasan (nuevo `backend/test/roles.test.js`).
+- [ ] **Render**: cargar `ADMIN_EMAIL` y `ADMIN_PASSWORD` en Environment antes o después del deploy. Una vez creado el admin, borrar `ADMIN_PASSWORD` del panel.
+- [ ] [SEGURIDAD] El sync del escáner le manda al dispositivo del staff la lista de entradas con nombre y email de cada comprador (pensado para el modo sin conexión). Decidir si el staff debe ver esos datos.
+- [ ] [SEGURIDAD] El login no tiene límite de intentos, y los tokens duran 30 días.
+- [ ] Modo sin conexión en el escáner (el backend ya lo soporta).
+- [ ] Probar `/staff` en celulares reales (Android e iPhone) y `/admin` en el navegador antes de la fiesta.
 
 ### Futuro
 - [ ] **Varios organizadores:** hoy hay un solo evento de un organizador externo. Con más organizadores, pasar a Marketplace de Mercado Pago: cada organizador vincula su cuenta y cada venta va directo a él, con comisión automática. Implica guardar en cada evento a qué cuenta de pago corresponde, usar esas credenciales en `createPayment` y una pantalla de "Vincular Mercado Pago".

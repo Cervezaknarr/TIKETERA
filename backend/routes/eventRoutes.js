@@ -7,15 +7,15 @@ const {
   updateEvent,
   deleteEvent,
 } = require("../controllers/eventController");
-const { protect } = require("../middleware/authMiddleware");
+const { protect, admin } = require("../middleware/authMiddleware");
 
 // Rutas públicas
 router.get("/", getEvents);
 router.get("/:id", getEventById);
 
-// Rutas protegidas
-router.post("/", protect, createEvent);
-router.put("/:id", protect, updateEvent);
-router.delete("/:id", protect, deleteEvent);
+// Rutas de administración
+router.post("/", protect, admin, createEvent);
+router.put("/:id", protect, admin, updateEvent);
+router.delete("/:id", protect, admin, deleteEvent);
 
 module.exports = router;

@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Ticketera · Admin</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>🎟️ Ticketera <span class="muted">· Admin</span></h1>
+  <nav id="nav"></nav>
+</header>
+<main>
+  <div id="msg"></div>
+  <div id="view"></div>
+</main>
+
+<script src="/common.js"></script>
+<script>
+// Panel de administración: eventos, compradores y usuarios staff
+const auth = createSession('admin');
+onUnauthorized = () => { logout(); flash('La sesión venció. Volvé a ingresar.', 'err'); };
+
+function renderNav() {
+  $('nav').innerHTML = session.user
+    ? `<span class="muted">${esc(session.user.name)}</span>
+       <button class="ghost" onclick="go('events')">Eventos</button>
+       <button class="ghost" onclick="go('edit')">Crear evento</button>
+       <button class="ghost" onclick="go('users')">Staff</button>
+       <a href="/staff/" class="ghost-link">Escáner</a>
+       <button onclick="logout()">Salir</button>`
+    : '';
+}
+
+function logout() { auth.set(null, null); renderNav(); go('events'); }
+
+function go(view, arg) {
+  flash('');
+  renderNav();
+  if (!session.token) {
+    return renderLogin('Administración', ['admin'], (token, user) => { auth.set(token, user); go('events'); });
+  }
+  ({ events: viewEvents, edit: viewEdit, buyers: viewBuyers, users: viewUsers }[view])(arg);
+}
+
+const eventStatus = { published: 'Publicado', draft: 'Borrador', cancelled: 'Cancelado' };
+
+// ---------- Eventos ----------
+async function viewEvents() {
+  $('view').innerHTML = '<p class="muted">Cargando…</p>';
+  try {
+    const { events } = await api('/events?limit=100');
+    // Ingresos de cada evento (en paralelo; si falla uno se muestra sin el dato)
+    const stats = await Promise.all(events.map(e =>
+      api(`/checkin/events/${e.id}/stats`, { auth: true }).then(r => r.stats).catch(() => null)));
+    $('view').innerHTML = `<h2>Eventos</h2>` + (events.length
+      ? `<div class="grid">${events.map((e, i) => `
+        <div class="card">
+          <h3>${esc(e.title)} <span class="tag ${e.status === 'published' ? 'completed' : 'failed'}">${eventStatus[e.status]}</span></h3>
+          <div class="muted">📅 ${new Date(e.date).toLocaleString('es-AR')}<br>📍 ${esc(e.location)}</div>
+          <div class="price">${money(e.ticketPrice)}</div>
+          <div class="muted">${e.ticketsAvailable} disponibles${stats[i] ? ` · ${stats[i].total} vendidas · ${stats[i].admitted} ingresaron` : ''}</div>
+          <p><button onclick="go('buyers','${e.id}')">Compradores</button>
+             <button class="ghost" onclick="go('edit','${e.id}')">Editar</button></p>
+        </div>`).join('')}</div>`
+      : `<p class="muted">Todavía no hay eventos.</p><p><button onclick="go('edit')">Crear el primero</button></p>`);
+  } catch (err) { $('view').innerHTML = ''; flash(err.message, 'err'); }
+}
+
+// ---------- Crear / editar evento ----------
+// datetime-local trabaja con la hora local sin zona: "2026-11-07T23:00"
+const toLocalInput = (d) => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 16); };
+
+async function viewEdit(id) {
+  let e = { title: '', description: '', location: '', ticketPrice: '', ticketsAvailable: '', status: 'published' };
+  if (id) {
+    try { ({ event: e } = await api('/events/' + id)); } catch (err) { return flash(err.message, 'err'); }
+  }
+  $('view').innerHTML = `
+  <div class="card" style="max-width:520px;margin:auto">
+    <h2>${id ? 'Editar evento' : 'Crear evento'}</h2>
+    <form onsubmit="submitEvent(event, ${id ? `'${e.id}'` : 'null'})">
+      <label>Título</label><input id="eTitle" required value="${esc(e.title)}">
+      <label>Descripción</label><textarea id="eDesc" rows="3" required>${esc(e.description)}</textarea>
+      <div class="row">
+        <div><label>Fecha y hora</label><input id="eDate" type="datetime-local" required value="${e.date ? toLocalInput(e.date) : ''}"></div>
+        <div><label>Lugar</label><input id="eLoc" required value="${esc(e.location)}"></div>
+      </div>
+      <div class="row">
+        <div><label>Precio</label><input id="ePrice" type="number" min="1" step="0.01" required value="${esc(e.ticketPrice)}"></div>
+        <div><label>Entradas disponibles</label><input id="eStock" type="number" min="1" required value="${esc(e.ticketsAvailable)}" data-original="${esc(e.ticketsAvailable)}"></div>
+      </div>
+      <label>Estado</label>
+      <select id="eStatus">
+        ${Object.entries(eventStatus).map(([v, t]) => `<option value="${v}" ${e.status === v ? 'selected' : ''}>${t}</option>`).join('')}
+      </select>
+      <p class="muted">Solo los eventos publicados se ven y se venden en la web. Para frenar la venta, pasalo a borrador.${id ? ' "Entradas disponibles" es lo que queda a la venta, sin contar las ya vendidas.' : ''}</p>
+      <p><button>${id ? 'Guardar cambios' : 'Publicar'}</button> <button type="button" class="ghost" onclick="go('events')">Cancelar</button></p>
+    </form>
+  </div>`;
+}
+
+async function submitEvent(ev, id) {
+  ev.preventDefault();
+  const body = {
+    title: $('eTitle').value, description: $('eDesc').value,
+    date: new Date($('eDate').value).toISOString(), location: $('eLoc').value,
+    ticketPrice: Number($('ePrice').value), status: $('eStatus').value,
+  };
+  // El cupo baja con cada venta: mandarlo solo si se cambió, para no pisar
+  // con el número viejo las ventas hechas mientras el formulario estaba abierto
+  if ($('eStock').value !== $('eStock').dataset.original) body.ticketsAvailable = Number($('eStock').value);
+  try {
+    await api(id ? '/events/' + id : '/events', { method: id ? 'PUT' : 'POST', auth: true, body });
+    go('events');
+    flash(id ? 'Evento actualizado' : 'Evento creado');
+  } catch (err) { flash(err.message, 'err'); }
+}
+
+// ---------- Compradores ----------
+const purchaseStatus = { completed: 'Pagada', pending: 'Pendiente', failed: 'Rechazada', refunded: 'Reembolsada' };
+let buyers = { event: null, purchases: [] };
+
+async function viewBuyers(eventId) {
+  $('view').innerHTML = '<p class="muted">Cargando…</p>';
+  try {
+    const [{ event }, { purchases }] = await Promise.all([
+      api('/events/' + eventId),
+      api('/purchases/event/' + eventId, { auth: true }),
+    ]);
+    buyers = { event, purchases };
+  } catch (err) { $('view').innerHTML = ''; return flash(err.message, 'err'); }
+
+  const paid = buyers.purchases.filter(p => p.status === 'completed');
+  const tickets = paid.flatMap(p => p.Tickets);
+  const stat = (label, value) => `<div class="card stat"><div class="muted">${label}</div><div class="statv">${value}</div></div>`;
+
+  $('view').innerHTML = `
+  <h2>${esc(buyers.event.title)}</h2>
+  <p class="muted">📅 ${new Date(buyers.event.date).toLocaleString('es-AR')} · 📍 ${esc(buyers.event.location)}</p>
+  <div class="stats">
+    ${stat('Entradas vendidas', tickets.length)}
+    ${stat('Recaudado', money(paid.reduce((s, p) => s + Number(p.totalPrice), 0)))}
+    ${stat('Ingresaron', `${tickets.filter(t => t.status === 'used').length} / ${tickets.length}`)}
+    ${stat('Disponibles', buyers.event.ticketsAvailable)}
+  </div>
+  <div class="card">
+    <div class="toolbar">
+      <input id="bSearch" placeholder="Buscar por nombre, email o código" oninput="renderBuyers()">
+      <select id="bFilter" onchange="renderBuyers()">
+        <option value="completed">Pagadas</option>
+        <option value="all">Todas</option>
+        <option value="pending">Pendientes</option>
+        <option value="failed">Rechazadas</option>
+      </select>
+      <button class="ghost" onclick="exportBuyersCsv()">Exportar CSV</button>
+    </div>
+    <div id="bList"></div>
+  </div>
+  <p><button class="ghost" onclick="go('events')">Volver a eventos</button>
+     <button class="ghost" onclick="go('edit','${buyers.event.id}')">Editar evento</button></p>`;
+  renderBuyers();
+}
+
+function renderBuyers() {
+  const q = $('bSearch').value.trim().toLowerCase();
+  const filter = $('bFilter').value;
+  const list = buyers.purchases.filter(p =>
+    (filter === 'all' || p.status === filter) &&
+    (!q || [p.buyerName, p.buyerEmail, ...p.Tickets.map(t => t.code)].some(v => v.toLowerCase().includes(q)))
+  );
+  const time = (d) => new Date(d).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+
+  $('bList').innerHTML = list.length ? `
+  <div class="table-wrap"><table>
+    <thead><tr><th>Comprador</th><th>Entradas</th><th>Total</th><th>Estado</th><th>Fecha</th><th></th></tr></thead>
+    <tbody>${list.map(p => `
+      <tr>
+        <td><b>${esc(p.buyerName)}</b><br><span class="muted">${esc(p.buyerEmail)}</span></td>
+        <td>${p.quantity}${p.Tickets.length ? `<br>${p.Tickets.map(t => `<span class="tag ${t.status}" title="${t.status === 'used' ? 'Ingresó a las ' + time(t.usedAt) : ''}">${esc(t.code)}${t.status === 'used' ? ' ✓' : ''}</span>`).join(' ')}` : ''}</td>
+        <td>${money(p.totalPrice)}</td>
+        <td><span class="tag ${p.status}">${purchaseStatus[p.status]}</span></td>
+        <td class="muted">${new Date(p.createdAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}</td>
+        <td>${p.status === 'completed' ? `<a href="/#/entradas/${esc(p.accessToken)}" target="_blank" rel="noopener">Ver entradas</a>` : ''}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table></div>
+  <p class="muted">${list.length} compra(s)</p>`
+  : '<p class="muted">No hay compras que coincidan.</p>';
+}
+
+// Una fila por entrada: sirve de lista de respaldo en papel para la puerta
+function exportBuyersCsv() {
+  const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const rows = [['Codigo', 'Estado entrada', 'Ingreso', 'Comprador', 'Email', 'Estado compra', 'Fecha compra']];
+  for (const p of buyers.purchases) {
+    for (const t of p.Tickets) {
+      rows.push([t.code, t.status === 'used' ? 'Ingresó' : t.status === 'void' ? 'Anulada' : 'Válida',
+        t.usedAt ? new Date(t.usedAt).toLocaleString('es-AR') : '', p.buyerName, p.buyerEmail,
+        purchaseStatus[p.status], new Date(p.createdAt).toLocaleString('es-AR')]);
+    }
+  }
+  const csv = '﻿' + rows.map(r => r.map(cell).join(';')).join('\r\n'); // BOM + ; para que Excel lo abra bien
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `compradores-${buyers.event.title.replace(/[^\w-]+/g, '_')}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ---------- Usuarios staff ----------
+async function viewUsers() {
+  $('view').innerHTML = '<p class="muted">Cargando…</p>';
+  let users;
+  try { ({ users } = await api('/users', { auth: true })); } catch (err) { $('view').innerHTML = ''; return flash(err.message, 'err'); }
+  $('view').innerHTML = `
+  <h2>Personal</h2>
+  <div class="card" style="margin-bottom:14px">
+    <h3>Agregar usuario staff</h3>
+    <p class="muted">El staff solo puede entrar a <b>${esc(location.origin)}/staff</b> y escanear entradas.</p>
+    <form onsubmit="submitUser(event)">
+      <div class="row">
+        <div><label>Nombre</label><input id="uName" required placeholder="Puerta 1"></div>
+        <div><label>Email</label><input id="uEmail" type="email" required></div>
+      </div>
+      <label>Contraseña (mínimo 8 caracteres)</label>
+      <input id="uPass" type="text" required minlength="8" autocomplete="new-password">
+      <p><button>Agregar</button></p>
+    </form>
+  </div>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Nombre</th><th>Email</th><th>Rol</th><th></th></tr></thead>
+      <tbody>${users.map(u => `
+        <tr>
+          <td><b>${esc(u.name)}</b></td>
+          <td class="muted">${esc(u.email)}</td>
+          <td><span class="tag">${u.role === 'admin' ? 'Admin' : 'Staff'}</span></td>
+          <td style="white-space:nowrap">${u.role === 'staff' ? `
+            <button class="ghost" onclick="resetPassword('${u.id}', this.dataset.name)" data-name="${esc(u.name)}">Cambiar contraseña</button>
+            <button class="ghost danger" onclick="deleteUser('${u.id}', this.dataset.name)" data-name="${esc(u.name)}">Borrar</button>` : ''}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+async function submitUser(ev) {
+  ev.preventDefault();
+  try {
+    await api('/users', { method: 'POST', auth: true, body: { name: $('uName').value, email: $('uEmail').value, password: $('uPass').value } });
+    await viewUsers();
+    flash('Usuario staff agregado. Pasale el email y la contraseña por un medio privado.');
+  } catch (err) { flash(err.message, 'err'); }
+}
+
+async function resetPassword(id, name) {
+  const password = prompt(`Nueva contraseña para ${name} (mínimo 8 caracteres):`);
+  if (!password) return;
+  try {
+    await api('/users/' + id, { method: 'PUT', auth: true, body: { password } });
+    flash('Contraseña cambiada');
+  } catch (err) { flash(err.message, 'err'); }
+}
+
+async function deleteUser(id, name) {
+  if (!confirm(`¿Borrar a ${name}? Su sesión en el escáner se corta en el acto.`)) return;
+  try {
+    await api('/users/' + id, { method: 'DELETE', auth: true });
+    await viewUsers();
+    flash('Usuario borrado');
+  } catch (err) { flash(err.message, 'err'); }
+}
+
+go('events');
+</script>
+</body>
+</html>

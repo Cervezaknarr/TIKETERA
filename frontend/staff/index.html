@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Ticketera · Staff</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>🎟️ Ticketera <span class="muted">· Staff</span></h1>
+  <nav id="nav"></nav>
+</header>
+<main>
+  <div id="msg"></div>
+  <div id="view"></div>
+</main>
+
+<script src="/common.js"></script>
+<script>
+// Sitio del personal de la puerta: solo inicia sesión y escanea entradas
+const auth = createSession('staff');
+onUnauthorized = () => { stopScanner(); logout(); flash('La sesión venció. Volvé a ingresar.', 'err'); };
+
+function renderNav() {
+  $('nav').innerHTML = session.user
+    ? `<span class="muted">${esc(session.user.name)}</span> <button class="ghost" onclick="logout()">Salir</button>`
+    : '';
+}
+
+function logout() { stopScanner(); auth.set(null, null); start(); }
+
+function start() {
+  renderNav();
+  if (!session.token) {
+    return renderLogin('Ingreso del personal', ['staff', 'admin'], (token, user) => { auth.set(token, user); flash(''); start(); });
+  }
+  viewScanner();
+}
+
+// ---------- Escáner ----------
+// Identifica este dispositivo en el registro de ingresos
+const deviceId = localStorage.getItem('deviceId') || (() => {
+  const id = 'web-' + Math.random().toString(36).slice(2, 10);
+  localStorage.setItem('deviceId', id);
+  return id;
+})();
+const uuid = () => crypto.randomUUID ? crypto.randomUUID()
+  : '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
+
+async function viewScanner() {
+  let events = [];
+  try { ({ events } = await api('/events?limit=100&status=published')); } catch (err) { return flash(err.message, 'err'); }
+  const lastEvent = localStorage.getItem('validateEvent');
+  $('view').innerHTML = `
+  <div class="card" style="max-width:480px;margin:auto">
+    <h2>Validar entrada</h2>
+    <label>Evento</label>
+    <select id="vEvent" required onchange="localStorage.setItem('validateEvent', this.value); loadValidateStats()">
+      ${events.map(e => `<option value="${e.id}" ${e.id === lastEvent ? 'selected' : ''}>${esc(e.title)} · ${new Date(e.date).toLocaleDateString('es-AR')}</option>`).join('')}
+    </select>
+    <p id="vStats" class="muted"></p>
+    <div class="scanner hidden" id="vScanner">
+      <video id="vVideo" playsinline muted></video>
+      <div class="scan-frame"></div>
+      <div class="scan-overlay hidden" id="vOverlay" onclick="resumeScan()"></div>
+    </div>
+    <p class="row">
+      <button id="vCamBtn" onclick="toggleScanner()">📷 Escanear con cámara</button>
+    </p>
+    <form onsubmit="submitValidate(event)">
+      <label>O ingresá el código a mano</label>
+      <div class="row">
+        <input id="vCode" required autocomplete="off" autocapitalize="characters" placeholder="XXXXX-XXXXX" style="font-family:monospace;font-size:1.2rem;flex:2">
+        <button>Validar</button>
+      </div>
+    </form>
+    <div id="vResult"></div>
+  </div>`;
+  loadValidateStats();
+}
+
+async function loadValidateStats() {
+  if (!$('vEvent') || !$('vEvent').value) return;
+  try {
+    const { stats } = await api(`/checkin/events/${$('vEvent').value}/stats`, { auth: true });
+    if ($('vStats')) $('vStats').textContent = `Ingresaron ${stats.admitted} de ${stats.total} · faltan ${stats.pending} · rechazos ${stats.rejectedScans}`;
+  } catch { if ($('vStats')) $('vStats').textContent = ''; }
+}
+
+// Manda un código al backend y devuelve [clase, título, detalle] para mostrar
+async function checkCode(code) {
+  const { results } = await api(`/checkin/events/${$('vEvent').value}/sync`, { method: 'POST', auth: true, body: {
+    deviceId, since: new Date().toISOString(), scans: [{ id: uuid(), code, scannedAt: new Date().toISOString() }],
+  }});
+  const { result, ticket } = results[0];
+  const time = (d) => new Date(d).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  return {
+    admitted: ['ok', '✅ PUEDE PASAR', ticket?.code],
+    duplicate: ['err', '⛔ YA INGRESÓ', ticket && `${ticket.code} · ingresó a las ${time(ticket.usedAt)}`],
+    invalid: ['err', '❌ CÓDIGO INVÁLIDO', 'No existe una entrada con ese código para este evento'],
+    void: ['err', '❌ ENTRADA ANULADA', ticket?.code],
+  }[result];
+}
+
+function showValidateResult(view) {
+  $('vResult').innerHTML = `<div class="result ${view[0]}"><h2>${view[1]}</h2><div>${esc(view[2])}</div></div>`;
+  feedback(view[0] === 'ok');
+  loadValidateStats();
+}
+
+async function submitValidate(ev) {
+  ev.preventDefault();
+  try {
+    showValidateResult(await checkCode($('vCode').value.trim()));
+    $('vCode').value = '';
+  } catch (err) { flash(err.message, 'err'); }
+}
+
+// Pitido y vibración para que el staff no tenga que mirar la pantalla cada vez
+let audioCtx;
+function feedback(ok) {
+  if (navigator.vibrate) navigator.vibrate(ok ? 120 : [250, 100, 250]);
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+    osc.frequency.value = ok ? 880 : 220;
+    osc.type = ok ? 'sine' : 'square';
+    gain.gain.value = 0.15;
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + (ok ? 0.15 : 0.45));
+  } catch { /* sin audio no pasa nada */ }
+}
+
+// ---------- Escáner de QR con la cámara ----------
+// Usa el detector nativo del navegador (Chrome/Android) y si no existe (Safari/iPhone)
+// carga jsQR, que está copiado en frontend/vendor para no depender de un CDN en la puerta
+const scanner = { stream: null, detector: null, busy: false, timer: null, lastCode: null, lastAt: 0 };
+const RESUME_MS = 2500;     // tiempo que queda el resultado en pantalla antes de seguir escaneando
+const SAME_CODE_MS = 5000;  // ignorar el mismo QR mientras sigue frente a la cámara
+
+function loadJsQR() {
+  if (window.jsQR) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = '/vendor/jsQR.js';
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('No se pudo cargar el lector de QR'));
+    document.head.appendChild(s);
+  });
+}
+
+async function toggleScanner() {
+  if (scanner.stream) return stopScanner();
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return flash('Este navegador no permite usar la cámara. Abrí la página con https:// (o en localhost).', 'err');
+  }
+  try {
+    if ('BarcodeDetector' in window && (await BarcodeDetector.getSupportedFormats()).includes('qr_code')) {
+      scanner.detector = new BarcodeDetector({ formats: ['qr_code'] });
+    } else {
+      scanner.detector = null;
+      await loadJsQR();
+    }
+    scanner.stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false,
+    });
+  } catch (err) {
+    scanner.stream = null;
+    const denied = err.name === 'NotAllowedError';
+    return flash(denied ? 'Permiso de cámara denegado. Habilitalo en la configuración del navegador.' : 'No se pudo abrir la cámara: ' + err.message, 'err');
+  }
+  const video = $('vVideo');
+  video.srcObject = scanner.stream;
+  await video.play();
+  $('vScanner').classList.remove('hidden');
+  $('vCamBtn').textContent = '⏹ Apagar cámara';
+  flash('');
+  scanLoop();
+}
+
+function stopScanner() {
+  clearTimeout(scanner.timer);
+  if (scanner.stream) scanner.stream.getTracks().forEach(t => t.stop());
+  scanner.stream = null;
+  scanner.busy = false;
+  if ($('vScanner')) $('vScanner').classList.add('hidden');
+  if ($('vCamBtn')) $('vCamBtn').textContent = '📷 Escanear con cámara';
+}
+
+const scanCanvas = document.createElement('canvas');
+async function readQR(video) {
+  if (scanner.detector) {
+    const codes = await scanner.detector.detect(video);
+    return codes[0]?.rawValue || null;
+  }
+  // jsQR trabaja sobre píxeles: achicar el cuadro lo hace mucho más rápido
+  const scale = Math.min(1, 640 / video.videoWidth);
+  scanCanvas.width = video.videoWidth * scale;
+  scanCanvas.height = video.videoHeight * scale;
+  const ctx = scanCanvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(video, 0, 0, scanCanvas.width, scanCanvas.height);
+  const img = ctx.getImageData(0, 0, scanCanvas.width, scanCanvas.height);
+  return jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' })?.data || null;
+}
+
+async function scanLoop() {
+  if (!scanner.stream) return;
+  const video = $('vVideo');
+  if (!video) return stopScanner(); // se cambió de vista
+  if (!scanner.busy && video.readyState >= 2) {
+    try {
+      const code = await readQR(video);
+      const repeated = code === scanner.lastCode && Date.now() - scanner.lastAt < SAME_CODE_MS;
+      if (code && !repeated) await handleScan(code.trim());
+    } catch { /* cuadro ilegible, se sigue con el próximo */ }
+  }
+  scanner.timer = setTimeout(scanLoop, 150);
+}
+
+async function handleScan(code) {
+  scanner.busy = true;
+  scanner.lastCode = code;
+  scanner.lastAt = Date.now();
+  let view;
+  try { view = await checkCode(code); }
+  catch (err) { view = ['err', '⚠️ SIN CONEXIÓN', err.message + ' · Volvé a escanear']; scanner.lastCode = null; }
+  if (!$('vOverlay')) return;
+  showValidateResult(view);
+  $('vOverlay').className = `scan-overlay result ${view[0]}`;
+  $('vOverlay').innerHTML = `<h2>${view[1]}</h2><div>${esc(view[2])}</div><div class="muted" style="color:#fff;margin-top:10px">Tocá para seguir</div>`;
+  clearTimeout(scanner.resumeTimer);
+  scanner.resumeTimer = setTimeout(resumeScan, RESUME_MS);
+}
+
+function resumeScan() {
+  clearTimeout(scanner.resumeTimer);
+  if ($('vOverlay')) $('vOverlay').className = 'scan-overlay hidden';
+  scanner.busy = false;
+}
+
+start();
+</script>
+</body>
+</html>

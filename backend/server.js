@@ -4,12 +4,14 @@ const cors = require('cors');
 require('dotenv').config();
 const { sequelize, testConnection } = require('./config/database');
 const { startExpirationSweep } = require('./utils/purchases');
+const { ensureAdmin } = require('./utils/admin');
 
 // Importar rutas
 const authRoutes = require("./routes/authRoutes");
 const eventRoutes = require("./routes/eventRoutes");
 const purchaseRoutes = require("./routes/purchaseRoutes");
 const checkinRoutes = require("./routes/checkinRoutes");
+const userRoutes = require("./routes/userRoutes");
 
 // Inicializar Express
 const app = express();
@@ -39,6 +41,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/events", eventRoutes);
 app.use("/api/purchases", purchaseRoutes);
 app.use("/api/checkin", checkinRoutes);
+app.use("/api/users", userRoutes);
 
 // Health check (lo usa el host para saber si el servidor está vivo)
 app.get("/health", (req, res) => {
@@ -49,7 +52,8 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Frontend estático: la navegación es por hash (#/...), no hace falta fallback
+// Frontend estático: la navegación es por hash (#/...), no hace falta fallback.
+// Tres sitios: / (visitantes: comprar y ver entradas), /staff (escáner) y /admin
 app.use(express.static(path.join(__dirname, "..", "frontend")));
 
 // Middleware para manejar rutas no encontradas
@@ -84,6 +88,9 @@ const startServer = async () => {
     // Para desarrollo, puedes usar { force: true } para recrear las tablas
     await sequelize.sync({ alter: true });
     console.log("Base de datos sincronizada correctamente");
+
+    // Crear el primer admin si está configurado ADMIN_EMAIL
+    await ensureAdmin();
 
     // Iniciar servidor
     app.listen(PORT, () => {
