@@ -4,7 +4,7 @@ services:
   - type: web
     name: ticketera
     runtime: node
-    plan: free
+    plan: 0.5c-512mb
     rootDir: backend
     buildCommand: npm ci --omit=dev
     startCommand: npm start
@@ -42,4 +42,4 @@ services:
 
 databases:
   - name: ticketera-db
-    plan: free
+    plan: 0.1c-256mb
