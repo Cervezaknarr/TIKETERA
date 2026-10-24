@@ -59,11 +59,12 @@ const scan = (code) => ({
 before(async () => {
   await sequelize.sync({ force: true });
 
-  // Organizador con rol "user": puede validar solo porque el evento es suyo
+  // El admin crea y administra los eventos
   const organizer = await User.create({
     name: "Organizador",
     email: "org@test.com",
     password: "secret",
+    role: "admin",
   });
   const staffUser = await User.create({
     name: "Puerta 1",
@@ -183,7 +184,7 @@ test("un pago rechazado devuelve el cupo una sola vez", async () => {
   assert.equal(await Ticket.count({ where: { purchaseId: purchase.id } }), 0);
 });
 
-test("el organizador del evento puede validar entradas", async () => {
+test("un admin también puede validar entradas", async () => {
   const res = await api("POST", `/api/checkin/events/${event.id}/sync`, {
     token: organizerToken,
     body: { deviceId: "org", scans: [] },
@@ -191,7 +192,7 @@ test("el organizador del evento puede validar entradas", async () => {
   assert.equal(res.status, 200);
 });
 
-test("solo staff, admin u organizador pueden sincronizar", async () => {
+test("solo staff o admin pueden sincronizar", async () => {
   const res = await api("POST", `/api/checkin/events/${event.id}/sync`, {
     token: userToken,
     body: { deviceId: "x", scans: [] },
@@ -280,7 +281,7 @@ test("datos de sync inválidos se rechazan", async () => {
   assert.equal(badScan.status, 400);
 });
 
-test("el organizador lista las compras con sus entradas", async () => {
+test("el admin lista las compras con sus entradas", async () => {
   const res = await api("GET", `/api/purchases/event/${event.id}`, {
     token: organizerToken,
   });
@@ -297,6 +298,12 @@ test("el organizador lista las compras con sus entradas", async () => {
     token: userToken,
   });
   assert.equal(other.status, 403);
+
+  // El staff solo escanea: no ve el listado de compras ni los montos
+  const staffList = await api("GET", `/api/purchases/event/${event.id}`, {
+    token: staffToken,
+  });
+  assert.equal(staffList.status, 403);
 });
 
 test("las estadísticas reflejan los ingresos", async () => {

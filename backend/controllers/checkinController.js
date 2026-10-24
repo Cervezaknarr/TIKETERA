@@ -12,12 +12,6 @@ const MAX_SCANS_PER_SYNC = 500;
 // confirmaron justo mientras se respondía el sync anterior
 const SINCE_OVERLAP_MS = 60 * 1000;
 
-/**
- * Pueden controlar el acceso el staff, los admin y el organizador del evento
- */
-const canCheckIn = (user, event) =>
-  user.role === "staff" || user.role === "admin" || event.userId === user.id;
-
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -105,7 +99,7 @@ const applyScan = async ({ scan, eventId, deviceId, staffUserId }) => {
  *          devuelve el resultado de cada uno, más las entradas que cambiaron
  *          desde `since` (o todas si no se manda `since`)
  * @route   POST /api/checkin/events/:eventId/sync
- * @access  Private (staff/admin)
+ * @access  Staff/Admin
  * @body    { deviceId, since?, scans: [{ id, code, scannedAt }] }
  */
 const syncCheckin = async (req, res) => {
@@ -154,13 +148,6 @@ const syncCheckin = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Evento no encontrado",
-      });
-    }
-
-    if (!canCheckIn(req.user, event)) {
-      return res.status(403).json({
-        success: false,
-        message: "No tienes permiso para controlar el acceso a este evento",
       });
     }
 
@@ -224,7 +211,7 @@ const syncCheckin = async (req, res) => {
 /**
  * @desc    Resumen de ingresos del evento (para el panel del organizador)
  * @route   GET /api/checkin/events/:eventId/stats
- * @access  Private (staff/admin)
+ * @access  Staff/Admin
  */
 const getCheckinStats = async (req, res) => {
   try {
@@ -235,13 +222,6 @@ const getCheckinStats = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Evento no encontrado",
-      });
-    }
-
-    if (!canCheckIn(req.user, event)) {
-      return res.status(403).json({
-        success: false,
-        message: "No tienes permiso para ver las estadísticas de este evento",
       });
     }
 

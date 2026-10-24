@@ -8,20 +8,20 @@ const {
   deleteEvent,
 } = require("../controllers/eventController");
 const { addLot, updateLot, deleteLot } = require("../controllers/lotController");
-const { protect } = require("../middleware/authMiddleware");
+const { protect, admin } = require("../middleware/authMiddleware");
 
 // Rutas públicas
 router.get("/", getEvents);
 router.get("/:id", getEventById);
 
-// Rutas protegidas
-router.post("/", protect, createEvent);
-router.put("/:id", protect, updateEvent);
-router.delete("/:id", protect, deleteEvent);
+// Rutas de administración
+router.post("/", protect, admin, createEvent);
+router.put("/:id", protect, admin, updateEvent);
+router.delete("/:id", protect, admin, deleteEvent);
 
-// Lotes (tipos de entrada) del evento
-router.post("/:eventId/lots", protect, addLot);
-router.put("/:eventId/lots/:lotId", protect, updateLot);
-router.delete("/:eventId/lots/:lotId", protect, deleteLot);
+// Lotes (tipos de entrada) del evento: también solo el administrador
+router.post("/:eventId/lots", protect, admin, addLot);
+router.put("/:eventId/lots/:lotId", protect, admin, updateLot);
+router.delete("/:eventId/lots/:lotId", protect, admin, deleteLot);
 
 module.exports = router;

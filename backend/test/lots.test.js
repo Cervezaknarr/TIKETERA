@@ -47,7 +47,7 @@ const defaultLots = () => [
   { name: "General", price: 2000, quantity: 20 },
 ];
 
-// Crea un evento del organizador y devuelve { event, lot(name) }
+// Crea un evento como administrador y devuelve { event, lot(name) }
 const newEvent = async (lots = defaultLots()) => {
   const { body } = await call("POST", "/api/events", { token: ownerToken, body: eventBody(lots) });
   return { event: body.event, lot: (name) => body.event.lots.find((l) => l.name === name) };
@@ -68,8 +68,8 @@ const available = async (lot) => (await Lot.findByPk(lot.id)).ticketsAvailable;
 
 before(async () => {
   await sequelize.sync({ force: true });
-  const owner = await User.create({ name: "Org", email: "org@test.com", password: "secret" });
-  const other = await User.create({ name: "Otro", email: "otro@test.com", password: "secret" });
+  const owner = await User.create({ name: "Org", email: "org@test.com", password: "secret", role: "admin" });
+  const other = await User.create({ name: "Otro", email: "otro@test.com", password: "secret", role: "staff" });
   ownerToken = jwt.sign({ id: owner.id }, process.env.JWT_SECRET);
   otherToken = jwt.sign({ id: other.id }, process.env.JWT_SECRET);
   server = app.listen(0);
@@ -135,7 +135,7 @@ test("crear un evento valida los lotes", async () => {
   assert.equal(unauthenticated.status, 401);
 });
 
-test("solo el organizador edita el evento y sus lotes", async () => {
+test("solo el administrador edita el evento y sus lotes (el staff y los anónimos no)", async () => {
   const { event, lot } = await newEvent();
   const vip = lot("VIP");
 
@@ -147,7 +147,7 @@ test("solo el organizador edita el evento y sus lotes", async () => {
   ];
   for (const [method, path, body] of attempts) {
     const other = await call(method, path, { token: otherToken, body });
-    assert.equal(other.status, 403, `${method} ${path} con otro usuario`);
+    assert.equal(other.status, 403, `${method} ${path} con un usuario staff`);
     const anonymous = await call(method, path, { body });
     assert.equal(anonymous.status, 401, `${method} ${path} sin sesión`);
   }
@@ -158,7 +158,7 @@ test("solo el organizador edita el evento y sus lotes", async () => {
   assert.equal(Number(unchanged.body.event.lots.find((l) => l.name === "VIP").price), 5000);
 });
 
-test("el organizador edita los datos del evento", async () => {
+test("el administrador edita los datos del evento", async () => {
   const { event } = await newEvent();
 
   const res = await call("PUT", `/api/events/${event.id}`, {
