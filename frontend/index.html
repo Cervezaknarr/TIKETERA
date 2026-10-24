@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ticketera</title>
 <link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/event.css">
 </head>
 <body>
 <header>
@@ -29,6 +30,10 @@ function go(view, arg) {
   ({ events: viewEvents, buy: viewBuy, tickets: viewTickets }[view])(arg);
 }
 const eventSlug = (location.pathname.match(/^\/e\/([^/]+)/) || [])[1];
+if (eventSlug) { // la URL de un evento tiene su propio diseño y no lleva al listado
+  document.body.classList.add('ev');
+  $('nav').style.display = 'none';
+}
 
 // ---------- Eventos ----------
 async function viewEvents() {
@@ -52,6 +57,17 @@ async function viewEvents() {
   } catch (err) { $('view').innerHTML = ''; flash(err.message, 'err'); }
 }
 
+// Todos los eventos son en el mismo lugar (Club Universitario de La Plata): mapa de Google
+// embebido, sin API key. Para cambiarlo: Google Maps > Compartir > Insertar un mapa > copiar el src
+const EVENT_MAP_SRC = "https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d6546.049845049984!2d-58.01646536762052!3d-34.88072047542471!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x95a2ddf0f0f47e75%3A0x8a17dcfbc1548515!2sClub%20Universitario%20de%20La%20Plata!5e0!3m2!1ses-419!2sar!4v1792817682053!5m2!1ses-419!2sar";
+
+function mapBlock(e) {
+  return `
+    <div class="ev-map">
+      <iframe title="Mapa de ${esc(e.location)}" src="${EVENT_MAP_SRC}" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+    </div>`;
+}
+
 // ---------- Compra ----------
 let currentEvent = null;
 async function viewBuy(id) {
@@ -60,25 +76,47 @@ async function viewBuy(id) {
   } catch (err) { return flash(err.message, 'err'); }
   const e = currentEvent;
   const firstFree = e.lots.find(l => l.ticketsAvailable > 0);
+  document.title = e.title;
+  const when = new Date(e.date).toLocaleString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+  // Cada tipo de entrada tiene su select de cantidad (1 a 10, sin pasar el cupo).
+  // Una compra es de un solo tipo: al tocar la tarjeta o su select, ese tipo queda elegido
+  const lotCard = l => {
+    const max = Math.min(l.ticketsAvailable, 10);
+    return `
+      <label class="ev-lot ${max < 1 ? 'sold' : ''}">
+        <input type="radio" name="bLot" value="${l.id}" ${l === firstFree ? 'checked' : ''} ${max < 1 ? 'disabled' : ''} onchange="updTotal()">
+        <span class="ev-lot-info">
+          <span class="ev-lot-name">${esc(l.name)}</span>
+          <span class="ev-lot-price">${max < 1 ? '<span class="ev-soldtag">Agotada</span>' : money(l.price)}</span>
+        </span>
+        ${max < 1 ? '' : `<span class="ev-lot-qty"><span>Cantidad</span>
+          <select data-lot="${l.id}" aria-label="Cantidad de ${esc(l.name)}" onchange="pickLot('${l.id}')">
+            ${Array.from({ length: max }, (_, i) => `<option>${i + 1}</option>`).join('')}
+          </select></span>`}
+      </label>`;
+  };
   $('view').innerHTML = `
-  <div class="card" style="max-width:480px;margin:auto">
-    <h2>${esc(e.title)}</h2>
-    <p class="muted">📅 ${new Date(e.date).toLocaleString('es-AR')} · 📍 ${esc(e.location)}</p>
-    <form onsubmit="submitBuy(event)">
-      <label>Tipo de entrada</label>
-      ${e.lots.map(l => `
-        <label class="choice ${l.ticketsAvailable < 1 ? 'sold' : ''}" style="color:var(--text);font-size:1rem">
-          <input type="radio" name="bLot" value="${l.id}" ${l === firstFree ? 'checked' : ''} ${l.ticketsAvailable < 1 ? 'disabled' : ''} onchange="updTotal()">
-          <span class="grow"><b>${esc(l.name)}</b></span>
-          ${l.ticketsAvailable < 1 ? '<span class="tag soldout">Agotada</span>' : `<span class="price" style="margin:0">${money(l.price)}</span>`}
-        </label>`).join('')}
-      <label>Nombre</label><input id="bName" required autocomplete="name">
-      <label>Email</label><input id="bEmail" type="email" required autocomplete="email">
-      <label id="bQtyLabel">Cantidad</label>
-      <input id="bQty" type="number" min="1" value="1" required oninput="updTotal()">
-      <p class="price" id="bTotal"></p>
-      <p><button ${firstFree ? '' : 'disabled'}>Pagar</button> ${eventSlug ? '' : `<button type="button" class="ghost" onclick="go('events')">Volver</button>`}</p>
-      <p class="muted">Al continuar te llevamos a la pasarela de pago. En modo de prueba el pago se aprueba automáticamente.</p>
+  <div class="ev-hero ${e.imageUrl ? '' : 'no-cover'}">${e.imageUrl ? `<img src="${esc(e.imageUrl)}" alt="Portada de ${esc(e.title)}">` : ''}</div>
+  <div class="ev-layout">
+    <section>
+      <h2 class="ev-title">${esc(e.title)}</h2>
+      <div class="ev-meta">
+        <span class="ev-chip">📅 ${esc(when)}</span>
+        <span class="ev-chip">📍 ${esc(e.location)}</span>
+      </div>
+      <p class="ev-desc">${esc(e.description)}</p>
+      ${mapBlock(e)}
+    </section>
+    <form class="ev-panel" onsubmit="submitBuy(event)">
+      <h2>Entradas</h2>
+      <div class="ev-lots">${e.lots.map(lotCard).join('')}</div>
+      <label for="bName">Nombre</label><input id="bName" required autocomplete="name">
+      <label for="bEmail">Email</label><input id="bEmail" type="email" required autocomplete="email">
+      <p class="ev-note">Al continuar te llevamos a la pasarela de pago. En modo de prueba el pago se aprueba automáticamente.</p>
+      <div class="ev-pay">
+        <div class="ev-total"><small>Total</small><b id="bTotal"></b></div>
+        <button class="ev-btn" ${firstFree ? '' : 'disabled'}>Pagar</button>
+      </div>
     </form>
   </div>`;
   updTotal();
@@ -87,12 +125,15 @@ const selectedLot = () => {
   const r = document.querySelector('input[name="bLot"]:checked');
   return r && currentEvent.lots.find(l => l.id === r.value);
 };
-// Actualiza el máximo y el total según el lote elegido
+const lotQty = lot => Number(document.querySelector(`select[data-lot="${lot.id}"]`).value);
+// Elegir la cantidad de un tipo de entrada también elige ese tipo
+function pickLot(id) {
+  document.querySelector(`input[name="bLot"][value="${id}"]`).checked = true;
+  updTotal();
+}
 function updTotal() {
   const lot = selectedLot();
-  $('bQty').max = lot ? Math.min(lot.ticketsAvailable, 10) : 0;
-  $('bQtyLabel').textContent = lot ? `Cantidad (máx. ${$('bQty').max})` : 'Cantidad';
-  $('bTotal').textContent = lot ? money(lot.price * (Number($('bQty').value) || 0)) : '';
+  $('bTotal').textContent = lot ? money(lot.price * lotQty(lot)) : '';
 }
 
 async function submitBuy(ev) {
@@ -102,7 +143,7 @@ async function submitBuy(ev) {
     if (!lot) throw new Error('Elegí un tipo de entrada');
     const { purchase, checkoutUrl } = await api('/purchases/checkout', { method: 'POST', body: {
       eventId: currentEvent.id, lotId: lot.id, buyerName: $('bName').value,
-      buyerEmail: $('bEmail').value, quantity: Number($('bQty').value),
+      buyerEmail: $('bEmail').value, quantity: lotQty(lot),
     }});
     // Pasarela real: se redirige a pagar y vuelve al link de las entradas
     if (checkoutUrl) { location.href = checkoutUrl; return; }

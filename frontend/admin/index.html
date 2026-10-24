@@ -86,13 +86,22 @@ async function viewEdit(id) {
     try { ({ event: e } = await api('/events/' + id)); } catch (err) { return flash(err.message, 'err'); }
   }
 
+  coverData = undefined; // sin tocar: el evento conserva su portada
   const eventFields = `
+      <label>Portada</label>
+      <div class="dropzone ${e.imageUrl ? 'has-img' : ''}" id="dropzone"
+        onclick="$('coverFile').click()" ondragover="coverDrag(event, true)" ondragleave="coverDrag(event, false)" ondrop="coverDrop(event)">
+        <img id="coverPrev" alt="" ${e.imageUrl ? `src="${esc(e.imageUrl)}"` : ''}>
+        <div class="dz-hint">🖼️ <b>Arrastrá la imagen acá</b><br><span class="muted">o hacé clic para elegirla · JPG, PNG o WebP</span></div>
+        <button type="button" class="ghost danger dz-remove" onclick="event.stopPropagation(); removeCover()">Quitar</button>
+        <input id="coverFile" type="file" accept="image/jpeg,image/png,image/webp" hidden onchange="setCover(this.files[0])">
+      </div>
       <label>Título</label><input id="eTitle" required value="${esc(e.title)}">
       <label>Descripción</label><textarea id="eDesc" rows="3" required>${esc(e.description)}</textarea>
       <div class="row">
         <div><label>Fecha y hora</label><input id="eDate" type="datetime-local" required value="${e.date ? toLocalInput(e.date) : ''}"></div>
         <div><label>Lugar</label><input id="eLoc" required value="${esc(e.location)}"></div>
-      </div>
+      </div>
       <label>Estado</label>
       <select id="eStatus">
         ${Object.entries(eventStatus).map(([v, t]) => `<option value="${v}" ${e.status === v ? 'selected' : ''}>${t}</option>`).join('')}
@@ -159,6 +168,7 @@ async function viewEdit(id) {
   </div>`;
 }
 
+
 // Fila para cargar un lote (nombre, precio, cantidad) al crear el evento
 function addLotRow(name = '') {
   const row = document.createElement('div');
@@ -175,6 +185,50 @@ function removeLotRow(btn) {
   btn.closest('.lotrow').remove();
 }
 
+// ---------- Portada (drag & drop) ----------
+// undefined = sin cambios, '' = quitada, otro valor = imagen nueva (data URL)
+let coverData;
+const COVER_MAX_WIDTH = 1600;
+
+function coverDrag(ev, over) {
+  ev.preventDefault();
+  $('dropzone').classList.toggle('over', over);
+}
+function coverDrop(ev) {
+  coverDrag(ev, false);
+  setCover(ev.dataTransfer.files[0]);
+}
+// Se reduce en el navegador (máx. 1600 px de ancho, JPEG) para que pese poco y cargue rápido
+function setCover(file) {
+  if (!file) return;
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return flash('La portada tiene que ser una imagen JPG, PNG o WebP', 'err');
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  img.onload = () => {
+    const scale = Math.min(1, COVER_MAX_WIDTH / img.width);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(img.width * scale);
+    canvas.height = Math.round(img.height * scale);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; // los PNG con transparencia no quedan negros
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
+    coverData = canvas.toDataURL('image/jpeg', 0.82);
+    $('coverPrev').src = coverData;
+    $('dropzone').classList.add('has-img');
+    flash('');
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); flash('No se pudo leer la imagen', 'err'); };
+  img.src = url;
+}
+function removeCover() {
+  coverData = '';
+  $('coverPrev').removeAttribute('src');
+  $('dropzone').classList.remove('has-img');
+  $('coverFile').value = '';
+}
+
 async function submitEvent(ev, id) {
   ev.preventDefault();
   const body = {
@@ -182,6 +236,7 @@ async function submitEvent(ev, id) {
     date: new Date($('eDate').value).toISOString(), location: $('eLoc').value,
     status: $('eStatus').value,
   };
+  if (coverData !== undefined) body.imageUrl = coverData;
   // Al crear van los lotes. Al editar solo los datos del evento: los lotes (precio y
   // cupo) se editan aparte, así una venta en curso no se pisa con un número viejo
   if (!id) {

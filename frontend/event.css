@@ -1,0 +1,88 @@
+/* Página pública de un evento (/e/<slug>). Todo cuelga de body.ev para no tocar
+   el resto de los sitios. Estilo sobrio tipo Apple: tipografía del sistema,
+   superficies suaves, esquinas grandes y vidrio esmerilado */
+body.ev {
+  --bg:#f5f5f7; --card:#fff; --text:#1d1d1f; --muted:#6e6e73; --accent:#0071e3; --border:rgba(0,0,0,.1);
+  --glass:rgba(245,245,247,.78); --field:#f5f5f7; --shadow:0 1px 2px rgba(0,0,0,.04),0 8px 30px rgba(0,0,0,.06);
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased; letter-spacing:-.011em; line-height:1.47;
+}
+@media (prefers-color-scheme: dark) {
+  body.ev {
+    --bg:#000; --card:#1c1c1e; --text:#f5f5f7; --muted:#98989d; --accent:#2997ff; --border:rgba(255,255,255,.14);
+    --glass:rgba(0,0,0,.72); --field:#2c2c2e; --shadow:none;
+  }
+}
+.ev header { position:sticky; top:0; z-index:10; justify-content:center; padding:12px 16px; background:var(--glass);
+  -webkit-backdrop-filter:saturate(180%) blur(20px); backdrop-filter:saturate(180%) blur(20px); border-bottom:1px solid var(--border); }
+.ev header h1 { font-size:1rem; font-weight:600; color:var(--text); letter-spacing:-.01em; }
+.ev main { max-width:1040px; padding:20px 16px 0; }
+
+/* Portada */
+.ev-hero { position:relative; border-radius:24px; overflow:hidden; background:linear-gradient(135deg,#5e5ce6,#bf5af2 55%,#ff6482);
+  aspect-ratio:16/9; box-shadow:var(--shadow); }
+.ev-hero img { width:100%; height:100%; object-fit:cover; display:block; }
+.ev-hero.no-cover::after { content:"🎟️"; position:absolute; inset:0; display:grid; place-items:center; font-size:4rem; opacity:.9; }
+
+.ev-layout { display:grid; gap:24px; margin-top:24px; }
+.ev-title { font-size:clamp(1.9rem,6vw,3rem); line-height:1.08; font-weight:700; letter-spacing:-.03em; margin:0 0 12px; }
+.ev-meta { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 16px; }
+.ev-chip { display:inline-flex; align-items:center; gap:6px; padding:7px 14px; border-radius:980px; background:var(--card);
+  border:1px solid var(--border); font-size:.9rem; color:var(--text); }
+.ev-desc { color:var(--muted); font-size:1.05rem; white-space:pre-line; margin:0; }
+
+/* Panel de compra */
+.ev-panel { background:var(--card); border-radius:22px; padding:22px; box-shadow:var(--shadow); border:1px solid var(--border); }
+.ev-panel h2 { font-size:1.35rem; font-weight:700; letter-spacing:-.02em; margin:0 0 12px; }
+.ev-panel label { color:var(--muted); font-size:.82rem; font-weight:500; margin:14px 0 6px; }
+.ev-panel input, .ev-panel select { background:var(--field); border:1px solid transparent; border-radius:12px; padding:13px 14px;
+  font-size:1rem; transition:border-color .15s, box-shadow .15s; -webkit-appearance:none; appearance:none; }
+.ev-panel input:focus, .ev-panel select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent); }
+
+.ev-lots { display:grid; gap:10px; }
+.ev-lot { display:flex; align-items:center; gap:14px; padding:14px 16px; border-radius:16px; background:var(--field);
+  border:2px solid transparent; cursor:pointer; margin:0 !important; color:var(--text) !important; font-size:1rem !important;
+  transition:border-color .15s, background .15s, transform .1s; }
+.ev-lot:active { transform:scale(.99); }
+.ev-lot input[type=radio] { position:absolute; opacity:0; pointer-events:none; width:0; height:0; padding:0; }
+.ev-lot:has(input:checked) { border-color:var(--accent); background:color-mix(in srgb,var(--accent) 8%,var(--card)); }
+.ev-lot:has(input:focus-visible) { box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent); }
+.ev-lot.sold { opacity:.5; cursor:default; }
+.ev-lot-info { flex:1; min-width:0; display:flex; flex-direction:column; }
+.ev-lot-name { font-weight:600; font-size:1.05rem; }
+.ev-lot-price { color:var(--muted); font-size:.95rem; }
+.ev-lot-qty { flex:0 0 auto; display:flex; flex-direction:column; align-items:flex-end; }
+.ev-lot-qty span { font-size:.72rem; color:var(--muted); margin-bottom:3px; font-weight:500; }
+.ev-lot-qty select { width:84px; padding:9px 30px 9px 12px; border-radius:10px; background:var(--card);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%236e6e73' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 11px center; border:1px solid var(--border); }
+.ev-lot-qty select:disabled { opacity:.5; }
+.ev-soldtag { font-size:.8rem; color:var(--err); font-weight:600; }
+
+/* Barra de pago: pegada abajo en el celular */
+.ev-pay { position:sticky; bottom:0; display:flex; align-items:center; justify-content:space-between; gap:14px; margin:20px -22px -22px;
+  padding:14px 22px calc(14px + env(safe-area-inset-bottom)); background:var(--glass); border-radius:0 0 22px 22px;
+  -webkit-backdrop-filter:saturate(180%) blur(20px); backdrop-filter:saturate(180%) blur(20px); border-top:1px solid var(--border); }
+.ev-total { display:flex; flex-direction:column; line-height:1.15; }
+.ev-total small { color:var(--muted); font-size:.75rem; }
+.ev-total b { font-size:1.5rem; letter-spacing:-.02em; }
+.ev .ev-btn, .ev-panel button.ev-btn { padding:14px 30px; border-radius:980px; border:0; background:var(--accent); color:#fff;
+  font-size:1rem; font-weight:600; transition:filter .15s, transform .1s; }
+.ev-btn:hover:not(:disabled) { filter:brightness(1.08); }
+.ev-btn:active:not(:disabled) { transform:scale(.97); }
+.ev-note { color:var(--muted); font-size:.8rem; margin:14px 0 0; text-align:center; }
+
+/* Mis entradas bajo /e/<slug> */
+.ev .card { border-radius:22px; border:1px solid var(--border); box-shadow:var(--shadow); }
+.ev button.ghost { border-radius:980px; border-color:transparent; background:color-mix(in srgb,var(--accent) 12%,transparent); }
+.ev .msg { border-radius:14px; }
+
+@media (min-width:860px) {
+  .ev main { padding-top:32px; }
+  .ev-layout { grid-template-columns:minmax(0,1fr) 400px; gap:40px; align-items:start; }
+  .ev-panel { position:sticky; top:76px; }
+}
+
+/* Mapa de la ubicación */
+.ev-map { position:relative; margin-top:24px; border-radius:22px; overflow:hidden; box-shadow:var(--shadow); border:1px solid var(--border); background:var(--card); }
+.ev-map iframe { display:block; width:100%; height:300px; border:0; }

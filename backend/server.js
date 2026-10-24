@@ -36,7 +36,7 @@ if (process.env.CORS_ORIGIN) {
 } else if (process.env.NODE_ENV !== "production") {
   app.use(cors());
 }
-app.use(express.json()); // Parsear solicitudes con JSON
+app.use(express.json({ limit: "2mb" })); // Parsear solicitudes con JSON (la portada viaja como data URL)
 app.use(express.urlencoded({ extended: true })); // Parsear solicitudes con formularios
 
 // Middleware para registrar solicitudes (útil para desarrollo)

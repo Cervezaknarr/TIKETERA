@@ -50,8 +50,9 @@ const Event = sequelize.define("Event", {
       key: "id",
     },
   },
+  // Portada: una URL o una imagen en data URL (la reduce el panel antes de subirla)
   imageUrl: {
-    type: DataTypes.STRING,
+    type: DataTypes.TEXT,
     allowNull: true,
   },
   status: {

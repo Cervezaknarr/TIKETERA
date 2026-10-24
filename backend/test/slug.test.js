@@ -74,3 +74,26 @@ test("los eventos viejos sin slug lo reciben al arrancar", async () => {
   assert.equal(await backfillSlugs(Event), 1);
   assert.equal((await Event.findByPk(old.id)).slug, "evento-viejo");
 });
+
+test("la portada acepta imágenes subidas y rechaza lo demás", async () => {
+  const token = require("jsonwebtoken").sign({ id: owner.id }, "test-secret");
+  const create = (imageUrl) =>
+    fetch(`${baseUrl}/api/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        title: "Con portada",
+        description: "x",
+        date: new Date(Date.now() + 86400000).toISOString(),
+        location: "Club",
+        imageUrl,
+        lots: [{ name: "General", price: 100, quantity: 10 }],
+      }),
+    });
+
+  const ok = await create("data:image/jpeg;base64,/9j/4AAQSkZJRg==");
+  assert.equal(ok.status, 201);
+  assert.match((await ok.json()).event.imageUrl, /^data:image\/jpeg/);
+  assert.equal((await create("data:text/html;base64,PGI+")).status, 400);
+  assert.equal((await create("javascript:alert(1)")).status, 400);
+});

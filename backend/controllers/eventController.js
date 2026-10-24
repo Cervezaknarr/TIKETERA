@@ -8,6 +8,14 @@ const { parseLotInput, withLots } = require("../utils/lots");
 
 const EVENT_STATUSES = ["draft", "published", "cancelled"];
 
+// La portada es una imagen subida (data URL de hasta ~1,5 MB) o una URL http(s)
+const MAX_IMAGE_LENGTH = 1_500_000;
+const isValidImage = (value) =>
+  typeof value === "string" &&
+  value.length <= MAX_IMAGE_LENGTH &&
+  /^(data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+|https?:\/\/\S+)$/.test(value);
+const INVALID_IMAGE ="La portada tiene que ser una imagen JPG, PNG o WebP de hasta 1,5 MB";
+
 const serverError = (res, error, message) => {
   console.error(error);
   res.status(500).json({
@@ -39,6 +47,10 @@ const createEvent = async (req, res) => {
     }
     if (Number.isNaN(new Date(date).getTime())) {
       return res.status(400).json({ success: false, message: "La fecha del evento no es válida" });
+    }
+
+    if (imageUrl && !isValidImage(imageUrl)) {
+      return res.status(400).json({ success: false, message: INVALID_IMAGE });
     }
 
     // Lotes: la lista nueva, o el precio y cupo únicos del formato anterior
@@ -74,7 +86,7 @@ const createEvent = async (req, res) => {
           description,
           date,
           location,
-          imageUrl,
+          imageUrl: imageUrl || null,
           userId: req.user.id, // El userId viene del middleware de autenticación
         },
         { transaction }
@@ -229,6 +241,9 @@ const updateEvent = async (req, res) => {
     }
     if (date !== undefined && Number.isNaN(new Date(date).getTime())) {
       return res.status(400).json({ success: false, message: "La fecha del evento no es válida" });
+    }
+    if (imageUrl && !isValidImage(imageUrl)) {
+      return res.status(400).json({ success: false, message: INVALID_IMAGE });
     }
     if (status !== undefined && !EVENT_STATUSES.includes(status)) {
       return res.status(400).json({ success: false, message: "Estado del evento inválido" });

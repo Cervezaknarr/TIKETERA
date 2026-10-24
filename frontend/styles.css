@@ -69,3 +69,10 @@ button.danger { color:var(--err); border-color:var(--err); }
 .choice.sold { opacity:.55; cursor:default; }
 .choice .grow { flex:1; }
 .choice:has(input:checked) { border-color:var(--accent); background:color-mix(in srgb,var(--accent) 8%,transparent); }
+.dropzone { position:relative; display:flex; align-items:center; justify-content:center; min-height:150px; border:2px dashed var(--border); border-radius:14px; background:var(--bg); cursor:pointer; overflow:hidden; text-align:center; transition:border-color .15s, background .15s; }
+.dropzone:hover, .dropzone.over { border-color:var(--accent); background:color-mix(in srgb,var(--accent) 8%,var(--bg)); }
+.dropzone img { display:none; width:100%; aspect-ratio:16/9; object-fit:cover; }
+.dropzone.has-img img { display:block; }
+.dropzone.has-img .dz-hint { display:none; }
+.dz-remove { display:none; position:absolute; top:10px; right:10px; background:var(--card); }
+.dropzone.has-img .dz-remove { display:block; }
