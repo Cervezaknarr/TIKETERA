@@ -15,6 +15,11 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - **Ramas viejas** que se conservan: `integracionPagos` (el usuario pidió no borrarla), `haciendoLotes`, `integracion-staff-lotes`, `staff-admin-roles`, `agregandoModo`.
 - **Pendientes del usuario en Render:** reactivar la tarjeta (estaba pausada) antes del cobro mensual; borrar `ADMIN_PASSWORD` (ya entró a `/admin`); `DB_SYNC_ALTER=false` cuando la estructura de la base esté estable (antes de abrir ventas).
 - **Pendientes técnicos principales:** modo sin conexión del escáner y probarlo en celulares reales (Alva); verificar `trust proxy` y el límite por IP en Render; prueba de carga; pasar Mercado Pago a credenciales de producción; limpiar los índices duplicados viejos de Postgres.
+- **`main` tiene 2 commits que `prod` todavía no (revisados el 2026-10-24, listos para subir):** URL pública por evento `/e/<slug>`, portada, página de compra nueva con mapa y panel de admin rediseñado. 75 tests pasan y la migración se probó en Postgres real (columna `slug` única + `imageUrl` a texto + slug para los eventos existentes). **Condiciones al desplegar:** NO tener `DB_SYNC_ALTER=false` (con esa variable el servidor se cae al arrancar porque falta la columna `slug`); hacerlo cuando no haya ventas.
+- **Fallos conocidos de esos commits, el usuario decidió dejarlos para más adelante:**
+  1. **Un borrador se ve por su dirección pública:** `/e/<slug>` y `GET /api/events/<slug>` devuelven la ficha completa (lotes y precios) de eventos en borrador o cancelados. El slug sale del título, así que se puede adivinar. Arreglo: `getEventById` devuelve 404 salvo para el admin, y el panel (`viewEdit`) tiene que mandar la sesión (`auth: true`).
+  2. **Crear un evento como "Borrador" lo publica:** `createEvent` ignora el campo `status`; el formulario lo ofrece. Arreglo: aceptar `status` al crear (validado contra `EVENT_STATUSES`).
+  3. Menores: el mapa de la página pública está fijo en el Club Universitario para cualquier evento (`EVENT_MAP_SRC`); el límite de 2 MB de `express.json` aplica a todo el servidor, no solo a la portada.
 - Las secciones de abajo son el historial: algunos pendientes viejos ya se resolvieron y están marcados.
 
 ## Historial
