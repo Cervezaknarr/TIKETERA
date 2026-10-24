@@ -7,6 +7,8 @@ const { startExpirationSweep } = require('./utils/purchases');
 const { migrateEventsToLots } = require('./utils/migrateLots');
 const { checkoutLimiter, authLimiter } = require('./middleware/rateLimit');
 const { ensureAdmin } = require('./utils/admin');
+const { backfillSlugs } = require('./utils/slug');
+const Event = require('./models/Event');
 
 // Importar rutas
 const authRoutes = require("./routes/authRoutes");
@@ -65,6 +67,10 @@ app.get("/health", (req, res) => {
 
 // Frontend estático: la navegación es por hash (#/...), no hace falta fallback.
 // Tres sitios: / (visitantes: comprar y ver entradas), /staff (escáner) y /admin
+// Cada evento tiene su URL pública /e/<slug>, que abre directo su compra
+app.get("/e/:slug", (req, res) => {
+  res.sendFile(path.join(__dirname, "..", "frontend", "index.html"));
+});
 app.use(express.static(path.join(__dirname, "..", "frontend")));
 
 // Middleware para manejar rutas no encontradas
@@ -105,6 +111,10 @@ const startServer = async () => {
     // Eventos anteriores a los lotes: pasan a tener un lote "General"
     const migrated = await migrateEventsToLots();
     if (migrated) console.log(`Eventos migrados a lotes: ${migrated}`);
+
+    // Eventos anteriores a las URLs propias: reciben su slug
+    const slugged = await backfillSlugs(Event);
+    if (slugged) console.log(`Eventos con slug nuevo: ${slugged}`);
 
     // Crear el primer admin si está configurado ADMIN_EMAIL
     await ensureAdmin();

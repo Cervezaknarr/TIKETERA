@@ -107,14 +107,19 @@ const createEvent = async (req, res) => {
  */
 const getEventById = async (req, res) => {
   try {
-    const event = await Event.findByPk(req.params.id, {
-      include: [
-        {
-          model: User,
-          attributes: ["name"], // Solo incluir el nombre del organizador
-        },
-      ],
-    });
+    // El parámetro es el ID o el slug (la URL pública /e/<slug>)
+    const isId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      req.params.id
+    );
+    const include = [
+      {
+        model: User,
+        attributes: ["name"], // Solo incluir el nombre del organizador
+      },
+    ];
+    const event = isId
+      ? await Event.findByPk(req.params.id, { include })
+      : await Event.findOne({ where: { slug: req.params.id }, include });
 
     if (event) {
       res.json({

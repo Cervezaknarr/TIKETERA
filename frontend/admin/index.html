@@ -59,7 +59,7 @@ async function viewEvents() {
       ? `<div class="grid">${events.map((e, i) => `
         <div class="card">
           <h3>${esc(e.title)} <span class="tag ${e.status === 'published' ? 'completed' : 'failed'}">${eventStatus[e.status]}</span></h3>
-          <div class="muted">📅 ${new Date(e.date).toLocaleString('es-AR')}<br>📍 ${esc(e.location)}</div>
+          <div class="muted">📅 ${new Date(e.date).toLocaleString('es-AR')}<br>📍 ${esc(e.location)}<br>🔗 <a href="/e/${esc(e.slug)}" target="_blank">${location.origin}/e/${esc(e.slug)}</a></div>
           <div class="lots">${e.lots.map(l => `
             <div class="lot ${l.ticketsAvailable < 1 ? 'sold' : ''}">
               <b>${esc(l.name)}</b>

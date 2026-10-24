@@ -1,6 +1,7 @@
 const { DataTypes } = require("sequelize");
 const { sequelize } = require("../config/database");
 const User = require("./User");
+const { uniqueSlug } = require("../utils/slug");
 
 const Event = sequelize.define("Event", {
   id: {
@@ -11,6 +12,12 @@ const Event = sequelize.define("Event", {
   title: {
     type: DataTypes.STRING,
     allowNull: false,
+  },
+  // Parte final de la URL pública del evento: /e/<slug>
+  slug: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    unique: true,
   },
   description: {
     type: DataTypes.TEXT,
@@ -51,6 +58,12 @@ const Event = sequelize.define("Event", {
     type: DataTypes.ENUM("draft", "published", "cancelled"),
     defaultValue: "published",
   },
+});
+
+Event.beforeCreate(async (event, options) => {
+  if (!event.slug) {
+    event.slug = await uniqueSlug(Event, event.title, null, options.transaction);
+  }
 });
 
 // Establecer relación: Un usuario puede crear muchos eventos

@@ -24,8 +24,11 @@ function go(view, arg) {
   flash('');
   // Solo la vista de entradas tiene URL propia (es el link que llega por email)
   if (view !== 'tickets' && location.hash) history.replaceState(null, '', location.pathname);
+  // En la URL de un evento (/e/<slug>) el inicio es su compra, no el listado
+  if (view === 'events' && eventSlug) { view = 'buy'; arg = eventSlug; }
   ({ events: viewEvents, buy: viewBuy, tickets: viewTickets }[view])(arg);
 }
+const eventSlug = (location.pathname.match(/^\/e\/([^/]+)/) || [])[1];
 
 // ---------- Eventos ----------
 async function viewEvents() {
@@ -43,7 +46,7 @@ async function viewEvents() {
               <b>${esc(l.name)}</b>
               ${l.ticketsAvailable < 1 ? '<span class="tag soldout">Agotada</span>' : `<span class="price" style="margin:0">${money(l.price)}</span>`}
             </div>`).join('')}</div>
-          <p><button ${e.ticketsAvailable < 1 ? 'disabled' : ''} onclick="go('buy','${e.id}')">${e.ticketsAvailable < 1 ? 'Agotado' : 'Comprar'}</button></p>
+          <p><button ${e.ticketsAvailable < 1 ? 'disabled' : ''} onclick="location.href='/e/${e.slug || e.id}'">${e.ticketsAvailable < 1 ? 'Agotado' : 'Comprar'}</button></p>
         </div>`).join('')}</div>`
       : '<p class="muted">Todavía no hay eventos a la venta.</p>');
   } catch (err) { $('view').innerHTML = ''; flash(err.message, 'err'); }
@@ -74,7 +77,7 @@ async function viewBuy(id) {
       <label id="bQtyLabel">Cantidad</label>
       <input id="bQty" type="number" min="1" value="1" required oninput="updTotal()">
       <p class="price" id="bTotal"></p>
-      <p><button ${firstFree ? '' : 'disabled'}>Pagar</button> <button type="button" class="ghost" onclick="go('events')">Volver</button></p>
+      <p><button ${firstFree ? '' : 'disabled'}>Pagar</button> ${eventSlug ? '' : `<button type="button" class="ghost" onclick="go('events')">Volver</button>`}</p>
       <p class="muted">Al continuar te llevamos a la pasarela de pago. En modo de prueba el pago se aprueba automáticamente.</p>
     </form>
   </div>`;
@@ -131,7 +134,7 @@ async function viewTickets(token) {
         <img class="qr" src="${t.qr}" alt="QR ${esc(t.code)}">
         <p class="tcode">${esc(t.code)}</p>
       </div>`).join('')}
-      <p style="text-align:center"><button class="ghost" onclick="go('events')">Volver a eventos</button></p>
+      <p style="text-align:center"><button class="ghost" onclick="go('events')">${eventSlug ? 'Volver al evento' : 'Volver a eventos'}</button></p>
     </div>`;
   } catch (err) { $('view').innerHTML = ''; flash(err.message, 'err'); }
 }
