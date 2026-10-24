@@ -77,7 +77,13 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
   - 61 tests pasan (8 nuevos en `test/limits.test.js`).
 - [ ] **Verificar `trust proxy` en Render:** si la cantidad de proxies es otra, todos los compradores compartirían un mismo límite por IP. Si aparecen compradores con "demasiados intentos", poner `RATE_LIMIT_CHECKOUT_MAX=0` y revisar `TRUST_PROXY`. Ojo: varias personas con datos móviles comparten IP.
 - [ ] Prueba de carga con Postgres (simular decenas de compras simultáneas) antes del día del evento
-- [ ] **Sin probar en Postgres:** al desplegar, `sync({ alter: true })` crea la tabla `Lots`, agrega columnas a `Purchases` y relaja `Events.ticketPrice/ticketsAvailable`; luego corre la migración de FIESTARDA. Revisar los logs de Render después del primer deploy (buscar "Eventos migrados a lotes").
+- [x] **Probado en Postgres real (2026-10-23)**, con un Postgres local con SSL (paquete `embedded-postgres`, fuera del proyecto): se armó una base igual a la de producción con el código de `prod` (3 reinicios, evento con 300 entradas, una compra pagada de 3, una pendiente de 2 y una fallida de 4) y se arrancó el servidor de `haciendoLotes` con `NODE_ENV=production`:
+  - Migración correcta: lote General de $25.000 con 300 asignadas y 295 disponibles (igual que antes), las 3 compras asociadas al lote, las 3 entradas intactas, y precio/cupo viejos del evento en NULL. Idempotente: al reiniciar no migra de nuevo.
+  - Cambios de estructura exactos: tabla `Lots` nueva, columnas `lotId/lotName/unitPrice` en `Purchases`, `Events.ticketPrice/ticketsAvailable` pasaron a opcionales.
+  - **Compras simultáneas (lo que SQLite no podía probar):** 120 pedidos a la vez por 20 entradas VIP → exactamente 20 vendidas y 100 "agotado" (553 ms); 60 webhooks simultáneos (3 por compra) sin errores ni entradas duplicadas; 60 compras mientras se editaba la cantidad del lote 7 veces → el cupo cierra exacto (asignadas − disponibles = vendidas + reservadas) y no hay códigos repetidos.
+  - **Hallazgo:** con `sync({ alter: true })` cada arranque agrega **un índice único duplicado** por tabla (Purchases, Tickets, Users). Con `DB_SYNC_ALTER=false` los reinicios no agregan nada. La base real de Render ya acumula duplicados de sus reinicios anteriores (inofensivos pero evitables).
+  - No cubierto: la versión exacta de Postgres de Render, ni carga real sobre su hardware.
+- **Plan de despliegue de los lotes:** 1) hacer una copia de seguridad de la base en Render; 2) fusionar `haciendoLotes` a `prod` (arranca con alter activo: crea `Lots` y migra FIESTARDA); 3) revisar los logs: "Eventos migrados a lotes: 1"; 4) agregar `DB_SYNC_ALTER=false` en las variables de Render para que los reinicios no sigan duplicando índices. Opcional más adelante: borrar los índices duplicados existentes.
 - [ ] Fusionar `haciendoLotes` con `prod` y `main` cuando el usuario lo decida
 
 ### Rama de producción (2026-10-21)
