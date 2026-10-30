@@ -181,13 +181,13 @@ test("con el máximo en 0 el limitador no limita", async () => {
 });
 
 test("la retención del cupo sigue a la ventana de pago", async () => {
-  assert.equal(paymentWindowMinutes(), 15);
-  assert.equal(holdMinutes(), 20);
+  assert.equal(paymentWindowMinutes(), 10);
+  assert.equal(holdMinutes(), 15);
 
-  process.env.PAYMENT_WINDOW_MINUTES = "10";
+  process.env.PAYMENT_WINDOW_MINUTES = "20";
   try {
-    assert.equal(paymentWindowMinutes(), 10);
-    assert.equal(holdMinutes(), 15);
+    assert.equal(paymentWindowMinutes(), 20);
+    assert.equal(holdMinutes(), 25);
 
     process.env.PURCHASE_HOLD_MINUTES = "30";
     assert.equal(holdMinutes(), 30); // el valor explícito manda
@@ -202,7 +202,7 @@ test("una compra pendiente se libera pasada la retención nueva y no antes", asy
   const { purchase } = (await buy(event, 3, "retencion@test.com")).body;
   assert.equal(await available(event), 7);
 
-  // A los 10 minutos sigue reservada (la retención es de 20)
+  // A los 10 minutos sigue reservada (la retención es de 15)
   await Purchase.update(
     { createdAt: new Date(Date.now() - 10 * 60 * 1000) },
     { where: { id: purchase.id }, silent: true }
@@ -217,4 +217,37 @@ test("una compra pendiente se libera pasada la retención nueva y no antes", asy
   );
   assert.equal(await releaseExpiredPurchases(), 1);
   assert.equal(await available(event), 10);
+});
+
+test("el nombre del comprador tiene un largo máximo", async () => {
+  const event = await newEvent(10);
+  const res = await post("/api/purchases/checkout", {
+    eventId: event.id,
+    lotId: event.lot.id,
+    buyerName: "A".repeat(101),
+    buyerEmail: "largo@test.com",
+    quantity: 1,
+  });
+  assert.equal(res.status, 400);
+  assert.equal(await available(event), 10);
+});
+
+test("las compras sin pagar no retienen más del tope del lote", async () => {
+  const event = await newEvent(100); // tope: 40 entradas pendientes
+  for (const email of ["a", "b", "c", "d"]) {
+    assert.equal((await buy(event, 10, `${email}@test.com`)).status, 201);
+  }
+  const blocked = await buy(event, 1, "e@test.com");
+  assert.equal(blocked.status, 429);
+  assert.equal(await available(event), 60);
+});
+
+test("el checkout informa hasta cuándo se puede pagar", async () => {
+  const event = await newEvent(10);
+  const { purchase } = (await buy(event, 1, "timer@test.com")).body;
+  const left = new Date(purchase.expiresAt).getTime() - Date.now();
+  assert.ok(left > 9 * 60 * 1000 && left <= 10 * 60 * 1000);
+
+  const view = await fetch(`${baseUrl}/api/purchases/tickets/${purchase.accessToken}`);
+  assert.equal((await view.json()).purchase.expiresAt, purchase.expiresAt);
 });

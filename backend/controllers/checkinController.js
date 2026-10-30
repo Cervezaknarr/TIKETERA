@@ -150,6 +150,12 @@ const syncCheckin = async (req, res) => {
         message: "Evento no encontrado",
       });
     }
+    if (event.status === "cancelled") {
+      return res.status(400).json({
+        success: false,
+        message: "El evento está cancelado",
+      });
+    }
 
     // Procesar en orden: si el mismo dispositivo escaneó dos veces la misma
     // entrada, la primera es "admitted" y la segunda "duplicate"

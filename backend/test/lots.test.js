@@ -38,6 +38,7 @@ const eventBody = (lots) => ({
   description: "Prueba",
   date: new Date(Date.now() + 86400000).toISOString(),
   location: "Club",
+  status: "published",
   lots,
 });
 

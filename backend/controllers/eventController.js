@@ -7,6 +7,7 @@ const { sequelize } = require("../config/database");
 const { parseLotInput, withLots } = require("../utils/lots");
 
 const EVENT_STATUSES = ["draft", "published", "cancelled"];
+const MAX_PAGE_SIZE = 100;
 
 // La portada es una imagen subida (data URL de hasta ~1,5 MB) o una URL http(s)
 const MAX_IMAGE_LENGTH = 1_500_000;
@@ -37,6 +38,10 @@ const createEvent = async (req, res) => {
   try {
     const { title, description, date, location, imageUrl, ticketPrice, ticketsAvailable } =
       req.body;
+    const status = req.body.status === undefined ? "draft" : req.body.status;
+    if (!EVENT_STATUSES.includes(status)) {
+      return res.status(400).json({ success: false, message: "Estado del evento inválido" });
+    }
 
     // Verificar campos obligatorios
     if (!title || !description || !date || !location) {
@@ -87,6 +92,7 @@ const createEvent = async (req, res) => {
           date,
           location,
           imageUrl: imageUrl || null,
+          status,
           userId: req.user.id, // El userId viene del middleware de autenticación
         },
         { transaction }
@@ -133,7 +139,8 @@ const getEventById = async (req, res) => {
       ? await Event.findByPk(req.params.id, { include })
       : await Event.findOne({ where: { slug: req.params.id }, include });
 
-    if (event) {
+    // Borradores y cancelados solo los ve el administrador
+    if (event && (event.status === "published" || req.isAdmin)) {
       res.json({
         success: true,
         event: await withLots(event),
@@ -156,8 +163,12 @@ const getEventById = async (req, res) => {
  */
 const getEvents = async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1; // Página actual, por defecto 1
-    const limit = parseInt(req.query.limit) || 10; // Límite por página, por defecto 10
+    const page = req.query.page === undefined ? 1 : parseInt(req.query.page);
+    let limit = req.query.limit === undefined ? 10 : parseInt(req.query.limit);
+    if (!(page >= 1) || !(limit >= 1)) {
+      return res.status(400).json({ success: false, message: "Paginación inválida" });
+    }
+    limit = Math.min(limit, MAX_PAGE_SIZE);
     const offset = (page - 1) * limit; // Cálculo del desplazamiento
 
     // Filtros opcionales
@@ -170,8 +181,10 @@ const getEvents = async (req, res) => {
       };
     }
 
-    // Filtrar por estado
-    if (req.query.status) {
+    // El público solo ve los publicados; el administrador puede filtrar por cualquier estado
+    if (!req.isAdmin) {
+      where.status = "published";
+    } else if (req.query.status) {
       where.status = req.query.status;
     }
 

@@ -8,11 +8,11 @@ const {
   deleteEvent,
 } = require("../controllers/eventController");
 const { addLot, updateLot, deleteLot } = require("../controllers/lotController");
-const { protect, admin } = require("../middleware/authMiddleware");
+const { protect, admin, optionalAdmin } = require("../middleware/authMiddleware");
 
 // Rutas públicas
-router.get("/", getEvents);
-router.get("/:id", getEventById);
+router.get("/", optionalAdmin, getEvents);
+router.get("/:id", optionalAdmin, getEventById);
 
 // Rutas de administración
 router.post("/", protect, admin, createEvent);

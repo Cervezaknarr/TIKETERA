@@ -51,7 +51,7 @@ const eventStatus = { published: 'Publicado', draft: 'Borrador', cancelled: 'Can
 async function viewEvents() {
   $('view').innerHTML = '<p class="muted">Cargando…</p>';
   try {
-    const { events } = await api('/events?limit=100');
+    const { events } = await api('/events?limit=100', { auth: true });
     // Ingresos de cada evento (en paralelo; si falla uno se muestra sin el dato)
     const stats = await Promise.all(events.map(e =>
       api(`/checkin/events/${e.id}/stats`, { auth: true }).then(r => r.stats).catch(() => null)));
@@ -83,7 +83,7 @@ const lotNamesList = '<datalist id="lotNames"><option value="EARLY"><option valu
 async function viewEdit(id) {
   let e = { title: '', description: '', location: '', status: 'published', lots: [] };
   if (id) {
-    try { ({ event: e } = await api('/events/' + id)); } catch (err) { return flash(err.message, 'err'); }
+    try { ({ event: e } = await api('/events/' + id, { auth: true })); } catch (err) { return flash(err.message, 'err'); }
   }
 
   coverData = undefined; // sin tocar: el evento conserva su portada

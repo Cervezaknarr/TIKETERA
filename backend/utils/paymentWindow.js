@@ -3,7 +3,7 @@
 // la ventana, antes vuelven a estar a la venta. La retención es la ventana más un
 // margen para los pagos que se están acreditando justo al vencer
 
-const DEFAULT_WINDOW_MINUTES = 15;
+const DEFAULT_WINDOW_MINUTES = 10;
 const HOLD_MARGIN_MINUTES = 5;
 
 /**

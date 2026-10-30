@@ -36,6 +36,7 @@ const newEvent = {
   description: "Evento de prueba",
   date: new Date(Date.now() + 86400000).toISOString(),
   location: "Salón",
+  status: "published",
   ticketPrice: 1000,
   ticketsAvailable: 100,
 };

@@ -9,6 +9,11 @@ const QRCode = require("qrcode");
 const { generateTicketCode } = require("../utils/ticketCode");
 const { sendTicketsEmail } = require("../utils/mailer");
 const { getProvider } = require("../utils/payments");
+const { paymentWindowMinutes } = require("../utils/paymentWindow");
+
+// Hasta cuándo puede pagar el comprador (para mostrarle el contador)
+const paymentDeadline = (purchase) =>
+  new Date(new Date(purchase.createdAt).getTime() + paymentWindowMinutes() * 60 * 1000);
 
 /**
  * Enviar por email las entradas de una compra ya confirmada
@@ -39,6 +44,12 @@ const createCheckoutSession = async (req, res) => {
         message: "Por favor proporciona todos los campos requeridos",
       });
     }
+    if (typeof buyerName !== "string" || buyerName.length > 100) {
+      return res.status(400).json({
+        success: false,
+        message: "El nombre es demasiado largo (máximo 100 caracteres)",
+      });
+    }
 
     // Buscar el evento
     const event = await Event.findByPk(eventId);
@@ -67,23 +78,6 @@ const createCheckoutSession = async (req, res) => {
       });
     }
     const maxPending = Number(process.env.MAX_PENDING_PER_EMAIL) || 5;
-    const pendingForEmail = await Purchase.count({
-      where: {
-        eventId,
-        status: "pending",
-        [Op.and]: sequelize.where(
-          sequelize.fn("lower", sequelize.col("buyerEmail")),
-          String(buyerEmail).toLowerCase()
-        ),
-      },
-    });
-    if (pendingForEmail >= maxPending) {
-      return res.status(429).json({
-        success: false,
-        message:
-          "Tenés varias compras sin terminar de pagar. Completalas o esperá unos minutos para volver a intentar",
-      });
-    }
 
     // El lote tiene que ser del evento. Si el evento tiene uno solo, no hace
     // falta indicarlo
@@ -100,6 +94,37 @@ const createCheckoutSession = async (req, res) => {
     // fija ahora: editar el lote después no cambia lo que se está pagando
     const unitPrice = Number(lot.price);
     const reservation = await sequelize.transaction(async (transaction) => {
+      // Bloquear el lote: los topes se cuentan con las compras pendientes y dos
+      // pedidos simultáneos no pueden pasar los dos
+      const locked = await Lot.findByPk(lot.id, { transaction, lock: transaction.LOCK.UPDATE });
+
+      const pendingForEmail = await Purchase.count({
+        where: {
+          eventId,
+          status: "pending",
+          [Op.and]: sequelize.where(
+            sequelize.fn("lower", sequelize.col("buyerEmail")),
+            String(buyerEmail).toLowerCase()
+          ),
+        },
+        transaction,
+      });
+      if (pendingForEmail >= maxPending) return { limit: "email" };
+
+      // Las compras sin pagar no pueden retener más de un porcentaje del lote
+      // (nunca menos de lo que permite una compra), así un bot no lo agota
+      const pendingTickets =
+        (await Purchase.sum("quantity", {
+          where: { lotId: lot.id, status: "pending" },
+          transaction,
+        })) || 0;
+      const percent = Number(process.env.MAX_PENDING_LOT_PERCENT) || 40;
+      const pendingCap = Math.max(Math.floor((lot.quantity * percent) / 100), maxPerPurchase);
+      // Si ya no queda cupo, el mensaje correcto es el de agotado, no este
+      if (locked.ticketsAvailable >= quantity && pendingTickets + quantity > pendingCap) {
+        return { limit: "lot" };
+      }
+
       if (!(await reserveStock(lot.id, quantity, transaction))) return null;
 
       return Purchase.create(
@@ -118,6 +143,19 @@ const createCheckoutSession = async (req, res) => {
       );
     });
 
+    if (reservation && reservation.limit === "email") {
+      return res.status(429).json({
+        success: false,
+        message:
+          "Tenés varias compras sin terminar de pagar. Completalas o esperá unos minutos para volver a intentar",
+      });
+    }
+    if (reservation && reservation.limit === "lot") {
+      return res.status(429).json({
+        success: false,
+        message: `Hay muchas compras en curso para ${lot.name}. Probá de nuevo en unos minutos`,
+      });
+    }
     if (!reservation) {
       const { ticketsAvailable } = await Lot.findByPk(lot.id);
       return res.status(400).json({
@@ -157,6 +195,7 @@ const createCheckoutSession = async (req, res) => {
         status: purchase.status,
         paymentGatewayId: purchase.paymentGatewayId,
         accessToken: purchase.accessToken,
+        expiresAt: paymentDeadline(purchase),
       },
       // URL de la pasarela a la que redirigir al comprador (null = pago simulado)
       checkoutUrl: payment.checkoutUrl,
@@ -373,6 +412,7 @@ const getPurchaseTickets = async (req, res) => {
         quantity: purchase.quantity,
         totalPrice: purchase.totalPrice,
         status: purchase.status,
+        expiresAt: purchase.status === "pending" ? paymentDeadline(purchase) : null,
       },
       event: purchase.Event,
       tickets: await Promise.all(

@@ -319,3 +319,10 @@ test("las estadísticas reflejan los ingresos", async () => {
     rejectedScans: 5,
   });
 });
+
+test("un evento cancelado no acepta escaneos", async () => {
+  await Event.update({ status: "cancelled" }, { where: { id: event.id } });
+  const res = await sync("puerta-cancelado");
+  assert.equal(res.status, 400);
+  await Event.update({ status: "published" }, { where: { id: event.id } });
+});

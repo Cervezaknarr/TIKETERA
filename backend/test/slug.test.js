@@ -97,3 +97,57 @@ test("la portada acepta imágenes subidas y rechaza lo demás", async () => {
   assert.equal((await create("data:text/html;base64,PGI+")).status, 400);
   assert.equal((await create("javascript:alert(1)")).status, 400);
 });
+
+test("borradores y cancelados no se ven en público, solo el admin", async () => {
+  const token = require("jsonwebtoken").sign({ id: owner.id }, process.env.JWT_SECRET);
+  const draft = await make("Secreto Borrador");
+  await Event.update({ status: "draft" }, { where: { id: draft.id } });
+  const cancelled = await make("Secreto Cancelado");
+  await Event.update({ status: "cancelled" }, { where: { id: cancelled.id } });
+  const open = await make("Evento Abierto");
+
+  for (const ref of [draft.slug, draft.id, cancelled.slug]) {
+    assert.equal((await fetch(`${baseUrl}/api/events/${ref}`)).status, 404);
+    const asAdmin = await fetch(`${baseUrl}/api/events/${ref}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(asAdmin.status, 200);
+  }
+
+  const titles = async (query, headers) =>
+    (await (await fetch(`${baseUrl}/api/events?limit=100${query}`, { headers })).json()).events.map(
+      (e) => e.title
+    );
+  const anon = await titles("&status=draft");
+  assert.ok(anon.includes("Evento Abierto") && !anon.includes("Secreto Borrador"));
+  assert.ok(!(await titles("")).includes("Secreto Cancelado"));
+  const admin = await titles("", { Authorization: `Bearer ${token}` });
+  assert.ok(admin.includes("Secreto Borrador") && admin.includes("Secreto Cancelado"));
+  assert.equal(open.status, "published");
+});
+
+test("el listado limita y valida la paginación", async () => {
+  assert.equal((await fetch(`${baseUrl}/api/events?page=-1`)).status, 400);
+  assert.equal((await fetch(`${baseUrl}/api/events?limit=0`)).status, 400);
+  const res = await fetch(`${baseUrl}/api/events?limit=100000`);
+  assert.equal((await res.json()).pagination.itemsPerPage, 100);
+});
+
+test("un evento creado sin estado queda en borrador y valida el estado", async () => {
+  const token = require("jsonwebtoken").sign({ id: owner.id }, process.env.JWT_SECRET);
+  const post = (extra) =>
+    fetch(`${baseUrl}/api/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        title: "Nuevo", description: "x", date: new Date(Date.now() + 86400000).toISOString(),
+        location: "Club", ticketPrice: 100, ticketsAvailable: 10, ...extra,
+      }),
+    });
+  const draft = await post({});
+  assert.equal(draft.status, 201);
+  assert.equal((await draft.json()).event.status, "draft");
+  const pub = await post({ status: "published" });
+  assert.equal((await pub.json()).event.status, "published");
+  assert.equal((await post({ status: "otro" })).status, 400);
+});

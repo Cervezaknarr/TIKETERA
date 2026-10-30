@@ -87,4 +87,23 @@ const staff = (req, res, next) => {
   }
 };
 
-module.exports = { protect, admin, staff };
+/**
+ * Middleware para rutas públicas que muestran más al administrador:
+ * si llega un token válido de un admin marca req.isAdmin; si no, sigue como visitante
+ */
+const optionalAdmin = async (req, res, next) => {
+  req.isAdmin = false;
+  try {
+    const header = req.headers.authorization;
+    if (header && header.startsWith("Bearer")) {
+      const decoded = jwt.verify(header.split(" ")[1], process.env.JWT_SECRET);
+      const user = await User.findByPk(decoded.id);
+      req.isAdmin = !!user && user.role === "admin";
+    }
+  } catch (error) {
+    // Token inválido o vencido: se trata como visitante
+  }
+  next();
+};
+
+module.exports = { protect, admin, staff, optionalAdmin };
