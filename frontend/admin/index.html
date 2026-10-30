@@ -363,7 +363,11 @@ function renderBuyers() {
 
 // Una fila por entrada: sirve de lista de respaldo en papel para la puerta
 function exportBuyersCsv() {
-  const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  // Una celda que empieza con = + - @ la tomaría Excel como fórmula: se antepone ' para que sea texto
+  const cell = (v) => {
+    const s = String(v ?? '');
+    return `"${(/^[=+\-@\t\r]/.test(s) ? "'" + s : s).replace(/"/g, '""')}"`;
+  };
   const rows = [['Codigo', 'Lote', 'Estado entrada', 'Ingreso', 'Comprador', 'Email', 'Estado compra', 'Fecha compra']];
   for (const p of buyers.purchases) {
     for (const t of p.Tickets) {

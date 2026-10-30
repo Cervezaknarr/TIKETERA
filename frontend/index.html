@@ -169,7 +169,8 @@ async function viewTickets(token, tries = 0) {
         <p class="muted">${esc(purchase.buyerName)} · ${purchase.quantity} entrada(s)${purchase.lotName ? ` ${esc(purchase.lotName)}` : ''} · ${money(purchase.totalPrice)}</p>
         ${tickets.length ? '<p class="muted">Cada QR es para una persona. También te llegan por email.</p>'
           : purchase.status === 'failed' ? '<p class="msg err">El pago no se completó. Volvé al evento para intentarlo de nuevo.</p>'
-          : '<p class="muted">Estamos confirmando tu pago… esta página se actualiza sola.</p>'}
+          : `<p class="muted">Estamos confirmando tu pago… esta página se actualiza sola.</p>
+             ${purchase.expiresAt ? `<p class="msg hold" id="hold" data-exp="${esc(purchase.expiresAt)}"></p>` : ''}`}
       </div>
       ${tickets.map((t, i) => `
       <div class="card ticket" style="margin-top:14px">
@@ -179,11 +180,34 @@ async function viewTickets(token, tries = 0) {
       </div>`).join('')}
       <p style="text-align:center"><button class="ghost" onclick="go('events')">${eventSlug ? 'Volver al evento' : 'Volver a eventos'}</button></p>
     </div>`;
+    startHoldTimer();
     // Al volver de la pasarela el aviso del pago puede tardar unos segundos: se reintenta solo
     if (!tickets.length && purchase.status === 'pending' && tries < 20) {
       setTimeout(() => { if (location.hash === '#/entradas/' + token) viewTickets(token, tries + 1); }, 3000);
     }
   } catch (err) { $('view').innerHTML = ''; flash(err.message, 'err'); }
+}
+
+// Cuenta regresiva de la reserva: las entradas se guardan unos minutos mientras se paga
+let holdTimer;
+function startHoldTimer() {
+  clearInterval(holdTimer);
+  const el = $('hold');
+  if (!el) return;
+  const exp = new Date(el.dataset.exp).getTime();
+  const tick = () => {
+    const left = Math.max(0, Math.round((exp - Date.now()) / 1000));
+    if (left > 0) {
+      el.className = 'msg hold';
+      el.textContent = `⏳ Tu reserva se mantiene ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} más. Completá el pago antes de que venza.`;
+    } else {
+      clearInterval(holdTimer);
+      el.className = 'msg err';
+      el.textContent = 'La reserva venció y las entradas se liberaron. Si ya pagaste, esperá unos segundos; si no, volvé al evento para intentarlo de nuevo.';
+    }
+  };
+  tick();
+  holdTimer = setInterval(tick, 1000);
 }
 
 // Al volver del pago, Mercado Pago agrega sus parámetros después del token

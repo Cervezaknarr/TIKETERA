@@ -76,3 +76,4 @@ button.danger { color:var(--err); border-color:var(--err); }
 .dropzone.has-img .dz-hint { display:none; }
 .dz-remove { display:none; position:absolute; top:10px; right:10px; background:var(--card); }
 .dropzone.has-img .dz-remove { display:block; }
+.msg.hold { background:color-mix(in srgb,var(--accent) 12%,transparent); color:var(--text); }
