@@ -69,24 +69,26 @@ module.exports = {
 
   /**
    * Crear la preferencia de pago en Mercado Pago
-   * @param {{ purchase: object, event: object }} data
+   * @param {{ purchase: object, event: object, items?: object[] }} data
+   *   items: líneas de la compra { lotName, unitPrice, quantity }; sin ellas se usa la compra entera
    * @returns {Promise<{ gatewayId: string, checkoutUrl: string }>}
    */
-  async createPayment({ purchase, event }) {
+  async createPayment({ purchase, event, items }) {
     const config = getConfig();
     const frontend = process.env.FRONTEND_URL || "http://localhost:5500";
     const returnUrl = `${frontend}/#/entradas/${purchase.accessToken}`;
 
     const payload = {
       external_reference: String(purchase.id),
-      items: [
-        {
-          title: [event.title, purchase.lotName].filter(Boolean).join(" - ").slice(0, 100),
-          quantity: purchase.quantity,
-          unit_price: Number((purchase.totalPrice / purchase.quantity).toFixed(2)),
-          currency_id: "ARS",
-        },
-      ],
+      items: (items && items.length
+        ? items
+        : [{ lotName: purchase.lotName, unitPrice: purchase.totalPrice / purchase.quantity, quantity: purchase.quantity }]
+      ).map((line) => ({
+        title: [event.title, line.lotName].filter(Boolean).join(" - ").slice(0, 100),
+        quantity: line.quantity,
+        unit_price: Number(Number(line.unitPrice).toFixed(2)),
+        currency_id: "ARS",
+      })),
       payer: { name: purchase.buyerName, email: purchase.buyerEmail },
       back_urls: { success: returnUrl, pending: returnUrl, failure: returnUrl },
       expires: true,

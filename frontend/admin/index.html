@@ -371,7 +371,7 @@ function exportBuyersCsv() {
   const rows = [['Codigo', 'Lote', 'Estado entrada', 'Ingreso', 'Comprador', 'Email', 'Estado compra', 'Fecha compra']];
   for (const p of buyers.purchases) {
     for (const t of p.Tickets) {
-      rows.push([t.code, p.lotName || '', t.status === 'used' ? 'Ingresó' : t.status === 'void' ? 'Anulada' : 'Válida',
+      rows.push([t.code, t.lotName || p.lotName || '', t.status === 'used' ? 'Ingresó' : t.status === 'void' ? 'Anulada' : 'Válida',
         t.usedAt ? new Date(t.usedAt).toLocaleString('es-AR') : '', p.buyerName, p.buyerEmail,
         purchaseStatus[p.status], new Date(p.createdAt).toLocaleString('es-AR')]);
     }

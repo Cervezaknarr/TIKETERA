@@ -34,6 +34,16 @@ const Ticket = sequelize.define(
       allowNull: false,
       unique: true,
     },
+    // Lote de esta entrada: una compra puede mezclar varios lotes. Las entradas
+    // anteriores a esto no lo tienen (se usa el lote de la compra)
+    lotId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    lotName: {
+      type: DataTypes.STRING(60),
+      allowNull: true,
+    },
     // Nombre del asistente (opcional, el comprador lo puede completar después)
     holderName: {
       type: DataTypes.STRING,

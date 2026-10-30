@@ -3,8 +3,9 @@ const Purchase = require("../models/Purchase");
 const Event = require("../models/Event");
 const Lot = require("../models/Lot");
 const Ticket = require("../models/Ticket");
+const PurchaseItem = require("../models/PurchaseItem");
 const { sequelize } = require("../config/database");
-const { releaseStock, reserveStock } = require("../utils/purchases");
+const { itemsOf, pendingByLot, releaseStock, reserveItems } = require("../utils/purchases");
 const QRCode = require("qrcode");
 const { generateTicketCode } = require("../utils/ticketCode");
 const { sendTicketsEmail } = require("../utils/mailer");
@@ -28,17 +29,34 @@ const sendPurchaseEmail = async (purchaseId) => {
   await sendTicketsEmail({ purchase, event: purchase.Event, tickets });
 };
 
+// "2× General, 3× VIP" para mostrar en listados y emails (la columna guarda 60 caracteres)
+const itemsSummary = (items) => {
+  const text = items.map((i) => `${i.quantity}× ${i.lotName}`).join(", ");
+  return text.length > 60 ? `${text.slice(0, 59)}…` : text;
+};
+
 /**
- * @desc    Crear una compra pendiente y la sesión de pago en la pasarela activa
+ * @desc    Crear una compra pendiente y la sesión de pago en la pasarela activa.
+ *          La compra puede llevar varios lotes (un carrito) y se paga de una vez
  * @route   POST /api/purchases/checkout
  * @access  Public
+ * @body    { eventId, buyerName, buyerEmail, items: [{ lotId, quantity }] }
+ *          El formato anterior { lotId, quantity } sigue funcionando
  */
 const createCheckoutSession = async (req, res) => {
   try {
-    const { eventId, lotId, buyerEmail, buyerName, quantity } = req.body;
+    const { eventId, buyerEmail, buyerName } = req.body;
+    const requested = req.body.items === undefined
+      ? [{ lotId: req.body.lotId, quantity: req.body.quantity }]
+      : req.body.items;
 
     // Verificar campos obligatorios
-    if (!eventId || !buyerEmail || !buyerName || !Number.isInteger(quantity) || quantity < 1) {
+    const invalidItems =
+      !Array.isArray(requested) ||
+      requested.length < 1 ||
+      requested.length > 20 ||
+      requested.some((i) => !i || !Number.isInteger(i.quantity) || i.quantity < 1);
+    if (!eventId || !buyerEmail || !buyerName || invalidItems) {
       return res.status(400).json({
         success: false,
         message: "Por favor proporciona todos los campos requeridos",
@@ -69,9 +87,11 @@ const createCheckoutSession = async (req, res) => {
     }
 
     // Topes contra el acaparamiento: sin ellos, una sola compra o un bot podría
-    // dejar el evento "agotado" reservando todo sin pagar
+    // dejar el evento "agotado" reservando todo sin pagar. El tope cuenta todas
+    // las entradas del carrito
     const maxPerPurchase = Number(process.env.MAX_TICKETS_PER_PURCHASE) || 10;
-    if (quantity > maxPerPurchase) {
+    const totalQuantity = requested.reduce((sum, i) => sum + i.quantity, 0);
+    if (totalQuantity > maxPerPurchase) {
       return res.status(400).json({
         success: false,
         message: `Podés comprar hasta ${maxPerPurchase} entradas por compra`,
@@ -79,24 +99,32 @@ const createCheckoutSession = async (req, res) => {
     }
     const maxPending = Number(process.env.MAX_PENDING_PER_EMAIL) || 5;
 
-    // El lote tiene que ser del evento. Si el evento tiene uno solo, no hace
-    // falta indicarlo
+    // Cada lote tiene que ser del evento. Si el evento tiene uno solo, no hace
+    // falta indicarlo. Un mismo lote repetido se suma
     const lots = await Lot.findAll({ where: { eventId } });
-    const lot = lotId ? lots.find((l) => l.id === lotId) : lots.length === 1 ? lots[0] : null;
-    if (!lot) {
-      return res.status(400).json({
-        success: false,
-        message: lotId ? "El lote no pertenece a este evento" : "Elegí un tipo de entrada",
-      });
+    const wanted = new Map();
+    for (const { lotId, quantity } of requested) {
+      const lot = lotId ? lots.find((l) => l.id === lotId) : lots.length === 1 ? lots[0] : null;
+      if (!lot) {
+        return res.status(400).json({
+          success: false,
+          message: lotId ? "El lote no pertenece a este evento" : "Elegí un tipo de entrada",
+        });
+      }
+      wanted.set(lot.id, { lot, quantity: (wanted.get(lot.id)?.quantity || 0) + quantity });
     }
+    // Siempre en el mismo orden: dos carritos simultáneos no se bloquean entre sí
+    const lines = [...wanted.values()].sort((a, b) => (a.lot.id < b.lot.id ? -1 : 1));
 
     // Reservar el cupo y crear la compra en una sola transacción. El precio se
     // fija ahora: editar el lote después no cambia lo que se está pagando
-    const unitPrice = Number(lot.price);
     const reservation = await sequelize.transaction(async (transaction) => {
-      // Bloquear el lote: los topes se cuentan con las compras pendientes y dos
+      // Bloquear los lotes: los topes se cuentan con las compras pendientes y dos
       // pedidos simultáneos no pueden pasar los dos
-      const locked = await Lot.findByPk(lot.id, { transaction, lock: transaction.LOCK.UPDATE });
+      const locked = new Map();
+      for (const { lot } of lines) {
+        locked.set(lot.id, await Lot.findByPk(lot.id, { transaction, lock: transaction.LOCK.UPDATE }));
+      }
 
       const pendingForEmail = await Purchase.count({
         where: {
@@ -113,65 +141,82 @@ const createCheckoutSession = async (req, res) => {
 
       // Las compras sin pagar no pueden retener más de un porcentaje del lote
       // (nunca menos de lo que permite una compra), así un bot no lo agota
-      const pendingTickets =
-        (await Purchase.sum("quantity", {
-          where: { lotId: lot.id, status: "pending" },
-          transaction,
-        })) || 0;
+      const held = await pendingByLot(eventId, transaction);
       const percent = Number(process.env.MAX_PENDING_LOT_PERCENT) || 40;
-      const pendingCap = Math.max(Math.floor((lot.quantity * percent) / 100), maxPerPurchase);
-      // Si ya no queda cupo, el mensaje correcto es el de agotado, no este
-      if (locked.ticketsAvailable >= quantity && pendingTickets + quantity > pendingCap) {
-        return { limit: "lot" };
+      for (const { lot, quantity } of lines) {
+        const pendingCap = Math.max(Math.floor((lot.quantity * percent) / 100), maxPerPurchase);
+        // Si ya no queda cupo, el mensaje correcto es el de agotado, no este
+        if (
+          locked.get(lot.id).ticketsAvailable >= quantity &&
+          (held.get(lot.id) || 0) + quantity > pendingCap
+        ) {
+          return { limit: "lot", lot };
+        }
       }
 
-      if (!(await reserveStock(lot.id, quantity, transaction))) return null;
+      const items = lines.map(({ lot, quantity }) => ({
+        lotId: lot.id,
+        lotName: lot.name,
+        unitPrice: Number(lot.price),
+        quantity,
+      }));
+      const failed = await reserveItems(items, transaction);
+      if (failed) return { soldOut: lines.find((l) => l.lot.id === failed.lotId).lot };
 
-      return Purchase.create(
+      const totalPrice = items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
+      const single = items.length === 1 ? items[0] : null;
+      const purchase = await Purchase.create(
         {
           eventId,
-          lotId: lot.id,
-          lotName: lot.name,
-          unitPrice,
+          // Un solo lote: se guarda también en la compra, como antes del carrito
+          lotId: single ? single.lotId : null,
+          lotName: single ? single.lotName : itemsSummary(items),
+          unitPrice: single ? single.unitPrice : null,
           buyerEmail,
           buyerName,
-          quantity,
-          totalPrice: Math.round(unitPrice * quantity * 100) / 100,
+          quantity: totalQuantity,
+          totalPrice: Math.round(totalPrice * 100) / 100,
           status: "pending",
         },
         { transaction }
       );
+      await PurchaseItem.bulkCreate(
+        items.map((item) => ({ ...item, purchaseId: purchase.id })),
+        { transaction }
+      );
+      return { purchase, items };
     });
 
-    if (reservation && reservation.limit === "email") {
+    if (reservation.limit === "email") {
       return res.status(429).json({
         success: false,
         message:
           "Tenés varias compras sin terminar de pagar. Completalas o esperá unos minutos para volver a intentar",
       });
     }
-    if (reservation && reservation.limit === "lot") {
+    if (reservation.limit === "lot") {
       return res.status(429).json({
         success: false,
-        message: `Hay muchas compras en curso para ${lot.name}. Probá de nuevo en unos minutos`,
+        message: `Hay muchas compras en curso para ${reservation.lot.name}. Probá de nuevo en unos minutos`,
       });
     }
-    if (!reservation) {
-      const { ticketsAvailable } = await Lot.findByPk(lot.id);
+    if (reservation.soldOut) {
+      const { name } = reservation.soldOut;
+      const { ticketsAvailable } = await Lot.findByPk(reservation.soldOut.id);
       return res.status(400).json({
         success: false,
         message:
           ticketsAvailable < 1
-            ? `El lote ${lot.name} está agotado`
-            : `Solo quedan ${ticketsAvailable} entradas disponibles en ${lot.name}`,
+            ? `El lote ${name} está agotado`
+            : `Solo quedan ${ticketsAvailable} entradas disponibles en ${name}`,
       });
     }
-    const purchase = reservation;
+    const { purchase, items } = reservation;
 
     // Crear el pago en la pasarela. Si falla, se libera el cupo reservado
     let payment;
     try {
-      payment = await getProvider().createPayment({ purchase, event });
+      payment = await getProvider().createPayment({ purchase, event, items });
       purchase.paymentGatewayId = payment.gatewayId;
       await purchase.save();
     } catch (error) {
@@ -189,6 +234,7 @@ const createCheckoutSession = async (req, res) => {
         id: purchase.id,
         eventId: purchase.eventId,
         lotName: purchase.lotName,
+        items: items.map(({ lotName, unitPrice, quantity }) => ({ lotName, unitPrice, quantity })),
         buyerEmail: purchase.buyerEmail,
         quantity: purchase.quantity,
         totalPrice: purchase.totalPrice,
@@ -255,18 +301,23 @@ const handlePaymentWebhook = async (req, res) => {
       if (purchase.status !== "pending" && !lateApproval) return "already_processed";
 
       if (status === "approved") {
-        if (lateApproval && !(await reserveStock(purchase.lotId, purchase.quantity, transaction))) {
+        const items = await itemsOf(purchase, transaction);
+        if (lateApproval && (await reserveItems(items, transaction))) {
           return "paid_without_stock";
         }
         purchase.status = "completed";
         await purchase.save({ transaction });
 
-        // Una entrada por persona, cada una con su propio código
-        const tickets = Array.from({ length: purchase.quantity }, () => ({
-          eventId: purchase.eventId,
-          purchaseId: purchase.id,
-          code: generateTicketCode(),
-        }));
+        // Una entrada por persona, cada una con su propio código y su lote
+        const tickets = items.flatMap((item) =>
+          Array.from({ length: item.quantity }, () => ({
+            eventId: purchase.eventId,
+            purchaseId: purchase.id,
+            lotId: item.lotId,
+            lotName: item.lotName,
+            code: generateTicketCode(),
+          }))
+        );
         await Ticket.bulkCreate(tickets, { transaction });
 
         // El email se manda después del commit, así nunca llega una entrada que no existe
@@ -356,8 +407,9 @@ const getEventPurchases = async (req, res) => {
       include: [
         {
           model: Ticket,
-          attributes: ["code", "status", "holderName", "usedAt"],
+          attributes: ["code", "status", "holderName", "usedAt", "lotName"],
         },
+        { model: PurchaseItem, as: "items", attributes: ["lotName", "unitPrice", "quantity"] },
       ],
       order: [
         ["createdAt", "DESC"],
@@ -400,7 +452,7 @@ const getPurchaseTickets = async (req, res) => {
 
     const tickets = await Ticket.findAll({
       where: { purchaseId: purchase.id },
-      order: [["createdAt", "ASC"], ["code", "ASC"]],
+      order: [["lotName", "ASC"], ["createdAt", "ASC"], ["code", "ASC"]],
     });
 
     res.json({
@@ -409,6 +461,11 @@ const getPurchaseTickets = async (req, res) => {
         buyerName: purchase.buyerName,
         buyerEmail: purchase.buyerEmail,
         lotName: purchase.lotName,
+        items: (await itemsOf(purchase)).map(({ lotName, unitPrice, quantity }) => ({
+          lotName,
+          unitPrice,
+          quantity,
+        })),
         quantity: purchase.quantity,
         totalPrice: purchase.totalPrice,
         status: purchase.status,
@@ -420,6 +477,7 @@ const getPurchaseTickets = async (req, res) => {
           code: ticket.code,
           status: ticket.status,
           holderName: ticket.holderName,
+          lotName: ticket.lotName || purchase.lotName,
           qr: await QRCode.toDataURL(ticket.code, { width: 300, margin: 2 }),
         }))
       ),

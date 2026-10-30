@@ -35,6 +35,9 @@ if (eventSlug) { // la URL de un evento tiene su propio diseño y no lleva al li
   $('nav').style.display = 'none';
 }
 
+// Fecha de un evento, igual en el listado, la compra y "Mis entradas" (sin segundos)
+const fmtWhen = d => new Date(d).toLocaleString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+
 // ---------- Eventos ----------
 async function viewEvents() {
   $('view').innerHTML = '<p class="muted">Cargando…</p>';
@@ -44,7 +47,7 @@ async function viewEvents() {
       ? `<div class="grid">${events.map(e => `
         <div class="card">
           <h3>${esc(e.title)}</h3>
-          <div class="muted">📅 ${new Date(e.date).toLocaleString('es-AR')}<br>📍 ${esc(e.location)}</div>
+          <div class="muted">📅 ${esc(fmtWhen(e.date))}<br>📍 ${esc(e.location)}</div>
           <p>${esc(e.description)}</p>
           <div class="lots">${e.lots.map(l => `
             <div class="lot ${l.ticketsAvailable < 1 ? 'sold' : ''}">
@@ -68,35 +71,59 @@ function mapBlock(e) {
     </div>`;
 }
 
+// Portada por defecto: el día del evento en grande
+function datePoster(date) {
+  const d = new Date(date);
+  const month = d.toLocaleString('es-AR', { month: 'long' });
+  const time = d.toLocaleString('es-AR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  return `<div class="ev-poster" aria-hidden="true">
+    <span class="ev-poster-day">${d.getDate()}</span>
+    <span class="ev-poster-month">${esc(month)}</span>
+    <span class="ev-poster-time">${esc(time)} hs</span>
+  </div>`;
+}
+
 // ---------- Compra ----------
+// Dos pasos, como un carrito: 1) elegir cuántas entradas de cada tipo, 2) resumen con los
+// datos del comprador y un reloj. Una compra puede mezclar tipos (2 Generales y 3 VIP)
+const MAX_PER_PURCHASE = 10;   // el servidor aplica el mismo tope (MAX_TICKETS_PER_PURCHASE)
+const CHECKOUT_MINUTES = 10;   // tiempo para completar los datos en el resumen
 let currentEvent = null;
+let cart = {};                 // lotId -> cantidad
+let checkoutTimer = null;
+
+const cartLines = () => (currentEvent ? currentEvent.lots : [])
+  .filter(l => cart[l.id] > 0).map(l => ({ lot: l, quantity: cart[l.id] }));
+const cartCount = () => cartLines().reduce((n, x) => n + x.quantity, 0);
+const cartTotal = () => cartLines().reduce((s, x) => s + x.lot.price * x.quantity, 0);
+
 async function viewBuy(id) {
+  clearInterval(checkoutTimer);
   try {
     ({ event: currentEvent } = await api('/events/' + id));
   } catch (err) { return flash(err.message, 'err'); }
   const e = currentEvent;
-  const firstFree = e.lots.find(l => l.ticketsAvailable > 0);
+  // Si el evento cambió mientras tanto, la selección se ajusta a lo que hay
+  for (const l of e.lots) cart[l.id] = Math.min(cart[l.id] || 0, l.ticketsAvailable, MAX_PER_PURCHASE);
   document.title = e.title;
-  const when = new Date(e.date).toLocaleString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
-  // Cada tipo de entrada tiene su select de cantidad (1 a 10, sin pasar el cupo).
-  // Una compra es de un solo tipo: al tocar la tarjeta o su select, ese tipo queda elegido
+  const when = fmtWhen(e.date);
   const lotCard = l => {
-    const max = Math.min(l.ticketsAvailable, 10);
+    const max = Math.min(l.ticketsAvailable, MAX_PER_PURCHASE);
     return `
-      <label class="ev-lot ${max < 1 ? 'sold' : ''}">
-        <input type="radio" name="bLot" value="${l.id}" ${l === firstFree ? 'checked' : ''} ${max < 1 ? 'disabled' : ''} onchange="updTotal()">
+      <div class="ev-lot ${max < 1 ? 'sold' : ''} ${cart[l.id] > 0 ? 'on' : ''}">
         <span class="ev-lot-info">
           <span class="ev-lot-name">${esc(l.name)}</span>
           <span class="ev-lot-price">${max < 1 ? '<span class="ev-soldtag">Agotada</span>' : money(l.price)}</span>
         </span>
         ${max < 1 ? '' : `<span class="ev-lot-qty"><span>Cantidad</span>
-          <select data-lot="${l.id}" aria-label="Cantidad de ${esc(l.name)}" onchange="pickLot('${l.id}')">
-            ${Array.from({ length: max }, (_, i) => `<option>${i + 1}</option>`).join('')}
+          <select data-lot="${l.id}" aria-label="Cantidad de ${esc(l.name)}" onchange="setQty('${l.id}', this)">
+            ${Array.from({ length: max + 1 }, (_, i) => `<option ${i === cart[l.id] ? 'selected' : ''}>${i}</option>`).join('')}
           </select></span>`}
-      </label>`;
+      </div>`;
   };
+  const anyFree = e.lots.some(l => l.ticketsAvailable > 0);
   $('view').innerHTML = `
-  <div class="ev-hero ${e.imageUrl ? '' : 'no-cover'}">${e.imageUrl ? `<img src="${esc(e.imageUrl)}" alt="Portada de ${esc(e.title)}">` : ''}</div>
+  <div class="ev-hero ${e.imageUrl ? '' : 'no-cover'}">${e.imageUrl ? `<img src="${esc(e.imageUrl)}" alt="Portada de ${esc(e.title)}">` : datePoster(e.date)}</div>
   <div class="ev-layout">
     <section>
       <h2 class="ev-title">${esc(e.title)}</h2>
@@ -107,52 +134,158 @@ async function viewBuy(id) {
       <p class="ev-desc">${esc(e.description)}</p>
       ${mapBlock(e)}
     </section>
-    <form class="ev-panel" onsubmit="submitBuy(event)">
+    <form class="ev-panel" onsubmit="goCheckout(event)">
       <h2>Entradas</h2>
       <div class="ev-lots">${e.lots.map(lotCard).join('')}</div>
-      <label for="bName">Nombre</label><input id="bName" required autocomplete="name">
-      <label for="bEmail">Email</label><input id="bEmail" type="email" required autocomplete="email">
-      <p class="ev-note">Al continuar te llevamos a la pasarela de pago. En modo de prueba el pago se aprueba automáticamente.</p>
+      <p class="ev-note">${anyFree ? `Podés combinar tipos de entrada. Hasta ${MAX_PER_PURCHASE} por compra.` : 'Las entradas de este evento están agotadas.'}</p>
       <div class="ev-pay">
         <div class="ev-total"><small>Total</small><b id="bTotal"></b></div>
-        <button class="ev-btn" ${firstFree ? '' : 'disabled'}>Pagar</button>
+        <button class="ev-btn" id="bPay" disabled>Comprar</button>
       </div>
     </form>
   </div>`;
   updTotal();
 }
-const selectedLot = () => {
-  const r = document.querySelector('input[name="bLot"]:checked');
-  return r && currentEvent.lots.find(l => l.id === r.value);
-};
-const lotQty = lot => Number(document.querySelector(`select[data-lot="${lot.id}"]`).value);
-// Elegir la cantidad de un tipo de entrada también elige ese tipo
-function pickLot(id) {
-  document.querySelector(`input[name="bLot"][value="${id}"]`).checked = true;
+
+// Cambiar la cantidad de un tipo de entrada, respetando el máximo por compra
+function setQty(lotId, select) {
+  const before = cart[lotId] || 0;
+  cart[lotId] = Number(select.value);
+  if (cartCount() > MAX_PER_PURCHASE) {
+    cart[lotId] = before;
+    select.value = String(before);
+    flash(`Podés comprar hasta ${MAX_PER_PURCHASE} entradas por compra`, 'err');
+  } else flash('');
   updTotal();
 }
 function updTotal() {
-  const lot = selectedLot();
-  $('bTotal').textContent = lot ? money(lot.price * lotQty(lot)) : '';
+  document.querySelectorAll('.ev-lot').forEach(card => {
+    const sel = card.querySelector('select');
+    card.classList.toggle('on', !!sel && Number(sel.value) > 0);
+  });
+  const n = cartCount();
+  $('bTotal').textContent = n ? money(cartTotal()) : '';
+  $('bPay').disabled = !n;
+  $('bPay').textContent = n ? `Comprar ${n} entrada${n > 1 ? 's' : ''}` : 'Comprar';
 }
+
+// ---------- Paso 2: resumen, datos del comprador y reloj ----------
+function goCheckout(ev) {
+  ev.preventDefault();
+  if (!cartCount()) return;
+  history.pushState({ step: 'resumen' }, '', '#/resumen');
+  viewCheckout();
+}
+
+function viewCheckout() {
+  const e = currentEvent;
+  if (!e || !cartCount()) return viewBuy(eventSlug);
+  clearInterval(checkoutTimer);
+  flash('');
+  window.scrollTo(0, 0);
+  const rows = cartLines().map(({ lot, quantity }) => `
+    <div class="ev-row">
+      <div class="ev-row-info">
+        <span class="ev-lot-name">${esc(lot.name)}</span>
+        <span class="ev-lot-price">${quantity} × ${money(lot.price)}</span>
+      </div>
+      <b class="ev-row-sub">${money(lot.price * quantity)}</b>
+      <button type="button" class="ev-x" aria-label="Quitar ${esc(lot.name)}" onclick="removeLine('${lot.id}')">✕</button>
+    </div>`).join('');
+  $('view').innerHTML = `
+  <div class="ev-step">
+    <button type="button" class="ghost ev-back" onclick="backToTickets()">← Cambiar entradas</button>
+    <h2 class="ev-title ev-step-title">Resumen de tu compra</h2>
+    <p class="ev-desc">${esc(e.title)} · ${esc(fmtWhen(e.date))}</p>
+  </div>
+  <div class="ev-layout">
+    <section>
+      <div class="ev-summary">${rows}
+        <div class="ev-row ev-row-total"><span>Total</span><b>${money(cartTotal())}</b></div>
+      </div>
+      <div class="ev-clock" id="clock" role="timer"></div>
+    </section>
+    <form class="ev-panel" onsubmit="submitBuy(event)">
+      <h2>Tus datos</h2>
+      <label for="bName">Nombre y apellido</label><input id="bName" required autocomplete="name" maxlength="100">
+      <label for="bEmail">Email</label><input id="bEmail" type="email" required autocomplete="email">
+      <label for="bEmail2">Repetir email</label><input id="bEmail2" type="email" required autocomplete="off">
+      <p class="ev-note">Verificá que tu email sea correcto: ahí recibís las entradas. Al continuar te llevamos a la pasarela de pago. En modo de prueba el pago se aprueba automáticamente.</p>
+      <div class="ev-pay">
+        <div class="ev-total"><small>Total</small><b>${money(cartTotal())}</b></div>
+        <button class="ev-btn" id="bFinish">Finalizar compra</button>
+      </div>
+    </form>
+  </div>`;
+  startCheckoutClock(Date.now() + CHECKOUT_MINUTES * 60 * 1000);
+}
+
+// Reloj del resumen: al llegar a cero se vuelve a elegir entradas
+function startCheckoutClock(deadline) {
+  const tick = () => {
+    const el = $('clock');
+    if (!el) return clearInterval(checkoutTimer);
+    const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+    el.innerHTML = `<span class="ev-clock-time">${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}</span>
+      <span>Tenés ${CHECKOUT_MINUTES} minutos para finalizar la compra.</span>`;
+    if (left <= 0) {
+      clearInterval(checkoutTimer);
+      history.replaceState(null, '', location.pathname);
+      viewBuy(eventSlug).then(() => flash('Se terminó el tiempo. Elegí tus entradas de nuevo.', 'err'));
+    }
+  };
+  tick();
+  checkoutTimer = setInterval(tick, 1000);
+}
+
+function removeLine(lotId) {
+  cart[lotId] = 0;
+  if (cartCount()) viewCheckout();
+  else backToTickets();
+}
+function backToTickets() {
+  clearInterval(checkoutTimer);
+  if (location.hash === '#/resumen') history.back();
+  else viewBuy(eventSlug);
+}
+// El botón "atrás" del navegador vuelve a la selección de entradas
+window.addEventListener('popstate', () => {
+  if (location.hash === '#/resumen') return cartCount() ? viewCheckout() : viewBuy(eventSlug);
+  if (/^#\/entradas\//.test(location.hash)) return;
+  if ($('clock')) viewBuy(eventSlug);
+});
 
 async function submitBuy(ev) {
   ev.preventDefault();
   try {
-    const lot = selectedLot();
-    if (!lot) throw new Error('Elegí un tipo de entrada');
+    if ($('bEmail').value.trim().toLowerCase() !== $('bEmail2').value.trim().toLowerCase()) {
+      $('bEmail2').focus();
+      throw new Error('Los emails no coinciden');
+    }
+    const items = cartLines().map(({ lot, quantity }) => ({ lotId: lot.id, quantity }));
+    if (!items.length) throw new Error('Elegí al menos una entrada');
+    $('bFinish').disabled = true;
     const { purchase, checkoutUrl } = await api('/purchases/checkout', { method: 'POST', body: {
-      eventId: currentEvent.id, lotId: lot.id, buyerName: $('bName').value,
-      buyerEmail: $('bEmail').value, quantity: lotQty(lot),
+      eventId: currentEvent.id, items, buyerName: $('bName').value.trim(), buyerEmail: $('bEmail').value.trim(),
     }});
+    clearInterval(checkoutTimer);
     // Pasarela real: se redirige a pagar y vuelve al link de las entradas
     if (checkoutUrl) { location.href = checkoutUrl; return; }
     // Sin checkoutUrl (modo de prueba): se simula la pasarela confirmando el cobro
     await api('/purchases/webhook', { method: 'POST', body: { paymentGatewayId: purchase.paymentGatewayId, status: 'approved' } });
+    cart = {};
     go('tickets', purchase.accessToken);
     flash('¡Compra realizada! Estas son tus entradas.');
-  } catch (err) { flash(err.message, 'err'); }
+  } catch (err) {
+    if ($('bFinish')) $('bFinish').disabled = false;
+    flash(err.message, 'err');
+  }
 }
+
+// "2× General, 3× VIP" (las compras viejas solo traen el nombre del lote)
+const purchaseItems = p => p.items && p.items.length
+  ? ' · ' + p.items.map(i => `${i.quantity}× ${esc(i.lotName)}`).join(', ')
+  : (p.lotName ? ' ' + esc(p.lotName) : '');
 
 // ---------- Mis entradas (link privado de la compra) ----------
 async function viewTickets(token, tries = 0) {
@@ -165,8 +298,8 @@ async function viewTickets(token, tries = 0) {
     <div style="max-width:420px;margin:auto">
       <div class="card">
         <h2>${esc(event.title)}</h2>
-        <p class="muted">📅 ${new Date(event.date).toLocaleString('es-AR')}<br>📍 ${esc(event.location)}</p>
-        <p class="muted">${esc(purchase.buyerName)} · ${purchase.quantity} entrada(s)${purchase.lotName ? ` ${esc(purchase.lotName)}` : ''} · ${money(purchase.totalPrice)}</p>
+        <p class="muted">📅 ${esc(fmtWhen(event.date))}<br>📍 ${esc(event.location)}</p>
+        <p class="muted">${esc(purchase.buyerName)} · ${purchase.quantity} entrada(s)${purchaseItems(purchase)} · ${money(purchase.totalPrice)}</p>
         ${tickets.length ? '<p class="muted">Cada QR es para una persona. También te llegan por email.</p>'
           : purchase.status === 'failed' ? '<p class="msg err">El pago no se completó. Volvé al evento para intentarlo de nuevo.</p>'
           : `<p class="muted">Estamos confirmando tu pago… esta página se actualiza sola.</p>
@@ -174,7 +307,7 @@ async function viewTickets(token, tries = 0) {
       </div>
       ${tickets.map((t, i) => `
       <div class="card ticket" style="margin-top:14px">
-        <div class="muted">Entrada ${i + 1} de ${tickets.length} · ${statusText[t.status]}</div>
+        <div class="muted">Entrada ${i + 1} de ${tickets.length}${t.lotName ? ` · ${esc(t.lotName)}` : ''} · ${statusText[t.status]}</div>
         <img class="qr" src="${t.qr}" alt="QR ${esc(t.code)}">
         <p class="tcode">${esc(t.code)}</p>
       </div>`).join('')}

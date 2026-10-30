@@ -79,7 +79,7 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 ### Lotes (tipos de entrada) y edición de eventos (2026-10-21, rama `haciendoLotes`)
 - Nuevo modelo `Lot` (`backend/models/Lot.js`): nombre, precio, `quantity` (asignada) y `ticketsAvailable` (lo que queda). Ej.: EARLY, VIP, General, Jugador. **Agotada = `ticketsAvailable` 0.**
 - El precio y el cupo ya no viven en el evento: las columnas `ticketPrice`/`ticketsAvailable` de `Event` quedaron nullable y en desuso. Al arrancar, `utils/migrateLots.js` convierte los eventos viejos en un lote "General" (con sus compras asociadas). Es idempotente.
-- Una compra es de **un solo lote**; guarda `lotId`, `lotName` y `unitPrice` tal como estaban al comprar (editar el lote después no cambia las compras).
+- Una compra era de un solo lote; **desde el carrito puede llevar varios** (ver "Carrito" abajo). Guarda `lotName` y `unitPrice` tal como estaban al comprar (editar el lote después no cambia las compras).
 - API: `PUT /api/events/:id` (datos y estado del evento), `POST /api/events/:id/lots`, `PUT .../lots/:lotId` (nombre, precio, `quantity` o `soldOut: true`), `DELETE .../lots/:lotId`. Todo solo para el organizador del evento (o admin).
 - Reglas: no se puede asignar menos de lo ya vendido o reservado; un lote con compras no se borra (se agota); el evento siempre tiene al menos un lote; un evento en borrador o cancelado no vende.
 - Frontend: crear evento con lotes, pantalla "Editar" (datos del evento + lotes con Guardar / Agotar / Borrar / Agregar), listado con lotes y etiqueta "Agotada", compra eligiendo lote, columna de lote en compradores y CSV. Probado en el navegador con un servidor local.
@@ -164,3 +164,9 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - Documentación de Nave: https://developer-portal-doc-mfe-website-mfe.ranty.io/nave/online-payments/checkout
 - Documentación de Mercado Pago: https://www.mercadopago.com.ar/developers/es/docs/checkout-pro
 - Las credenciales nunca van al chat, a git ni a lugares públicos.
+
+### Carrito: una compra con varios lotes (2026-10-31, sin desplegar)
+- La página `/e/<slug>` funciona en dos pasos, como Passline: 1) elegir cuántas entradas de cada tipo (select 0 a 10 por tipo, tope de 10 en total); 2) resumen con la lista, un reloj de 10 min y los datos del comprador (nombre, email y repetir email).
+- Backend: `POST /api/purchases/checkout` acepta `items: [{ lotId, quantity }]` (el formato `{ lotId, quantity }` sigue andando). Nuevo modelo `PurchaseItem` (una línea por lote) y `Ticket.lotId/lotName` (cada entrada sabe de qué tipo es). Reserva todo o nada, con los lotes bloqueados en orden; el tope por compra cuenta todas las entradas del carrito. Webhook, vencimiento y reserva tardía trabajan por línea (`itemsOf`, `reserveItems` en `utils/purchases.js`). Las pasarelas reciben `items` (Mercado Pago y Nave arman una línea por lote).
+- El cupo se reserva al **finalizar la compra**, no al pasar al resumen: el reloj del resumen es visual. Passline reserva al pasar al resumen; se decidió dejarlo como estaba.
+- **Al desplegar:** crea la tabla `PurchaseItems` y las columnas `Tickets.lotId/lotName`: `DB_SYNC_ALTER` no puede estar en `false` ese día. No probado contra Postgres ni contra Mercado Pago real (los tests usan SQLite y una pasarela simulada). 90 tests pasan.

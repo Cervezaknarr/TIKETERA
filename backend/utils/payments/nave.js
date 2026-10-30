@@ -133,13 +133,16 @@ module.exports = {
 
   /**
    * Crear la intención de pago en Nave
-   * @param {{ purchase: object, event: object }} data
+   * @param {{ purchase: object, event: object, items?: object[] }} data
+   *   items: líneas de la compra { lotName, unitPrice, quantity }; sin ellas se usa la compra entera
    * @returns {Promise<{ gatewayId: string, checkoutUrl: string }>}
    */
-  async createPayment({ purchase, event }) {
+  async createPayment({ purchase, event, items }) {
     const config = getConfig();
     const total = money(purchase.totalPrice);
-    const unitPrice = money(purchase.totalPrice / purchase.quantity);
+    const lines = items && items.length
+      ? items
+      : [{ lotName: purchase.lotName, unitPrice: purchase.totalPrice / purchase.quantity, quantity: purchase.quantity }];
 
     const payload = {
       external_payment_id: String(purchase.id),
@@ -147,14 +150,12 @@ module.exports = {
       transactions: [
         {
           amount: { currency: "ARS", value: total },
-          products: [
-            {
-              name: [event.title, purchase.lotName].filter(Boolean).join(" - ").slice(0, 100),
-              description: `Entrada ${purchase.lotName || ""} para ${event.title}`.replace(/\s+/g, " ").slice(0, 200),
-              quantity: purchase.quantity,
-              unit_price: { currency: "ARS", value: unitPrice },
-            },
-          ],
+          products: lines.map((line) => ({
+            name: [event.title, line.lotName].filter(Boolean).join(" - ").slice(0, 100),
+            description: `Entrada ${line.lotName || ""} para ${event.title}`.replace(/\s+/g, " ").slice(0, 200),
+            quantity: line.quantity,
+            unit_price: { currency: "ARS", value: money(line.unitPrice) },
+          })),
         },
       ],
       buyer: {

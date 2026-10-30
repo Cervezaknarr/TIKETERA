@@ -45,7 +45,7 @@ const sendTicketsEmail = async ({ purchase, event, tickets }) => {
     .map(
       (ticket, i) => `
       <div style="border:1px solid #e4e6ee;border-radius:12px;padding:16px;margin:12px 0;text-align:center">
-        <p style="margin:0 0 8px;color:#6b7080">Entrada ${i + 1} de ${tickets.length}</p>
+        <p style="margin:0 0 8px;color:#6b7080">Entrada ${i + 1} de ${tickets.length}${ticket.lotName ? ` · ${esc(ticket.lotName)}` : ""}</p>
         <img src="cid:qr-${i + 1}" width="220" height="220" alt="QR ${esc(ticket.code)}">
         <p style="font-family:monospace;font-size:22px;letter-spacing:2px;margin:8px 0 0"><b>${esc(ticket.code)}</b></p>
       </div>`
