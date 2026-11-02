@@ -46,7 +46,7 @@ async function viewEvents() {
     $('view').innerHTML = `<h2>Próximos eventos</h2>` + (events.length
       ? `<div class="grid">${events.map(e => `
         <div class="card">
-          <h3>${esc(e.title)}</h3>
+          <h3>${esc(e.title)}${e.adultsOnly ? ' <span class="tag">+18</span>' : ''}</h3>
           <div class="muted">📅 ${esc(fmtWhen(e.date))}<br>📍 ${esc(e.location)}</div>
           <p>${esc(e.description)}</p>
           <div class="lots">${e.lots.map(l => `
@@ -54,7 +54,7 @@ async function viewEvents() {
               <b>${esc(l.name)}</b>
               ${l.ticketsAvailable < 1 ? '<span class="tag soldout">Agotada</span>' : `<span class="price" style="margin:0">${money(l.price)}</span>`}
             </div>`).join('')}</div>
-          <p><button ${e.ticketsAvailable < 1 ? 'disabled' : ''} onclick="location.href='/e/${e.slug || e.id}'">${e.ticketsAvailable < 1 ? 'Agotado' : 'Comprar'}</button></p>
+          <p><button ${e.ticketsAvailable < 1 && !e.hasCodeLots ? 'disabled' : ''} onclick="location.href='/e/${e.slug || e.id}'">${e.ticketsAvailable < 1 && !e.hasCodeLots ? 'Agotado' : 'Comprar'}</button></p>
         </div>`).join('')}</div>`
       : '<p class="muted">Todavía no hay eventos a la venta.</p>');
   } catch (err) { $('view').innerHTML = ''; flash(err.message, 'err'); }
@@ -91,6 +91,8 @@ const CHECKOUT_MINUTES = 10;   // tiempo para completar los datos en el resumen
 let currentEvent = null;
 let cart = {};                 // lotId -> cantidad
 let checkoutTimer = null;
+const accessCodes = new Set(); // códigos que ingresó el comprador
+let ageAccepted = false;       // ya aceptó ser mayor de 18 (evento +18)
 
 const cartLines = () => (currentEvent ? currentEvent.lots : [])
   .filter(l => cart[l.id] > 0).map(l => ({ lot: l, quantity: cart[l.id] }));
@@ -103,6 +105,10 @@ async function viewBuy(id) {
     ({ event: currentEvent } = await api('/events/' + id));
   } catch (err) { return flash(err.message, 'err'); }
   const e = currentEvent;
+  // Los lotes con código no vienen en el evento: se piden con los códigos ya ingresados,
+  // así el cupo está al día. Un código que dejó de valer simplemente no suma lotes
+  const unlocked = await Promise.all([...accessCodes].map(code => unlockCode(code).then(lots => lots.map(l => ({ ...l, code }))).catch(() => [])));
+  e.lots = [...e.lots, ...unlocked.flat()];
   // Si el evento cambió mientras tanto, la selección se ajusta a lo que hay
   for (const l of e.lots) cart[l.id] = Math.min(cart[l.id] || 0, l.ticketsAvailable, MAX_PER_PURCHASE);
   document.title = e.title;
@@ -130,6 +136,7 @@ async function viewBuy(id) {
       <div class="ev-meta">
         <span class="ev-chip">📅 ${esc(when)}</span>
         <span class="ev-chip">📍 ${esc(e.location)}</span>
+        ${e.adultsOnly ? '<span class="ev-chip">🔞 Solo mayores de 18</span>' : ''}
       </div>
       <p class="ev-desc">${esc(e.description)}</p>
       ${mapBlock(e)}
@@ -137,14 +144,41 @@ async function viewBuy(id) {
     <form class="ev-panel" onsubmit="goCheckout(event)">
       <h2>Entradas</h2>
       <div class="ev-lots">${e.lots.map(lotCard).join('')}</div>
-      <p class="ev-note">${anyFree ? `Podés combinar tipos de entrada. Hasta ${MAX_PER_PURCHASE} por compra.` : 'Las entradas de este evento están agotadas.'}</p>
+      ${e.hasCodeLots ? `
+      <label for="bCode">¿Tenés un código?</label>
+      <div class="ev-code">
+        <input id="bCode" autocomplete="off" autocapitalize="characters" maxlength="40" onkeydown="if (event.key === 'Enter') { event.preventDefault(); applyCode(); }">
+        <button type="button" class="ghost" onclick="applyCode()">Aplicar</button>
+      </div>` : ''}
+      <p class="ev-note">${anyFree ? `Podés combinar tipos de entrada. Hasta ${MAX_PER_PURCHASE} por compra.` : e.hasCodeLots ? 'Ingresá tu código para ver las entradas disponibles.' : 'Las entradas de este evento están agotadas.'}</p>
       <div class="ev-pay">
         <div class="ev-total"><small>Total</small><b id="bTotal"></b></div>
         <button class="ev-btn" id="bPay" disabled>Comprar</button>
       </div>
     </form>
-  </div>`;
+  </div>
+  ${e.adultsOnly ? `
+  <dialog id="ageDialog" class="ev-dialog" aria-labelledby="ageTitle">
+    <h2 id="ageTitle">🔞 Evento para mayores de 18 años</h2>
+    <p>Para comprar entradas tenés que confirmar que sos mayor de 18 años.</p>
+    <button type="button" class="ev-btn" onclick="acceptAge()">Acepto, soy mayor de 18 años</button>
+    <button type="button" class="ghost" onclick="$('ageDialog').close()">Cancelar</button>
+  </dialog>` : ''}`;
   updTotal();
+}
+
+const unlockCode = code => api(`/events/${currentEvent.id}/unlock`, { method: 'POST', body: { code } }).then(r => r.lots);
+
+// Ingresar un código: suma a la lista los tipos de entrada que habilita
+async function applyCode() {
+  const code = $('bCode').value.trim().toUpperCase();
+  if (!code) return;
+  try {
+    const lots = await unlockCode(code);
+    accessCodes.add(code);
+    await viewBuy(eventSlug);
+    flash(`Código aplicado: ${lots.map(l => l.name).join(', ')}`);
+  } catch (err) { flash(err.message, 'err'); }
 }
 
 // Cambiar la cantidad de un tipo de entrada, respetando el máximo por compra
@@ -173,6 +207,14 @@ function updTotal() {
 function goCheckout(ev) {
   ev.preventDefault();
   if (!cartCount()) return;
+  if (currentEvent.adultsOnly && !ageAccepted) return $('ageDialog').showModal();
+  history.pushState({ step: 'resumen' }, '', '#/resumen');
+  viewCheckout();
+}
+
+function acceptAge() {
+  ageAccepted = true;
+  $('ageDialog').close();
   history.pushState({ step: 'resumen' }, '', '#/resumen');
   viewCheckout();
 }
@@ -262,11 +304,11 @@ async function submitBuy(ev) {
       $('bEmail2').focus();
       throw new Error('Los emails no coinciden');
     }
-    const items = cartLines().map(({ lot, quantity }) => ({ lotId: lot.id, quantity }));
+    const items = cartLines().map(({ lot, quantity }) => ({ lotId: lot.id, quantity, code: lot.code }));
     if (!items.length) throw new Error('Elegí al menos una entrada');
     $('bFinish').disabled = true;
     const { purchase, checkoutUrl } = await api('/purchases/checkout', { method: 'POST', body: {
-      eventId: currentEvent.id, items, buyerName: $('bName').value.trim(), buyerEmail: $('bEmail').value.trim(),
+      eventId: currentEvent.id, items, ageConfirmed: ageAccepted, buyerName: $('bName').value.trim(), buyerEmail: $('bEmail').value.trim(),
     }});
     clearInterval(checkoutTimer);
     // Pasarela real: se redirige a pagar y vuelve al link de las entradas

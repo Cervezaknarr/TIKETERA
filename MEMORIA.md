@@ -40,6 +40,12 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - `render.yaml` en la raíz: servicio web (`rootDir: backend`) + base Postgres, ambos en `plan: free`. `PAYMENT_PROVIDER` arranca en `mock`.
 - En local la web se abre en `http://localhost:5000` (backend), no con un servidor aparte.
 
+### Lotes con código y eventos +18 (2026-11-02, rama `lotes-codigo-mayores18`, sin mergear) [SEGURIDAD: controla quién accede a un lote]
+- **Lote con código** (`Lot.accessCode`, opcional, lo pone el admin): el lote no aparece en la web ni en la API pública. El comprador ingresa el código en el evento (`POST /api/events/:id/unlock`, límite por IP `RATE_LIMIT_CODE_MAX`) y el checkout lo vuelve a validar. Sin distinguir mayúsculas.
+- **Evento +18** (`Event.adultsOnly`): al tocar Comprar aparece el cartel con el botón de aceptar, y el checkout rechaza la compra sin `ageConfirmed: true`.
+- **Límites conocidos:** el código es compartido y reutilizable (el único tope es el cupo del lote); guardado en texto plano para que el admin lo vea. El +18 es una declaración del comprador: no se verifica ni queda registrada en la compra.
+- **Al desplegar:** agrega columnas (`Lot.accessCode`, `Event.adultsOnly`): NO tener `DB_SYNC_ALTER=false`.
+
 ## Decisiones tomadas
 - **Pasarela elegida: Mercado Pago.** Nave exige CUIT y el usuario no tiene. Nave queda implementado por si se consigue.
 - **Cobro del primer evento:** por ahora con la cuenta del usuario, solo para probar y dejar todo configurado. Después se usa la cuenta del organizador, o Marketplace de Mercado Pago si hay varios organizadores. Cambiar de cuenta es cambiar `MERCADOPAGO_ACCESS_TOKEN`.

@@ -41,4 +41,12 @@ const authLimiter = () =>
     message: "Demasiados intentos. Esperá unos minutos e intentá de nuevo",
   });
 
-module.exports = { createRateLimiter, checkoutLimiter, authLimiter };
+// Códigos de acceso a lotes: frena el adivinado
+const codeLimiter = () =>
+  createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: fromEnv("RATE_LIMIT_CODE_MAX", 30),
+    message: "Demasiados intentos con códigos. Esperá unos minutos e intentá de nuevo",
+  });
+
+module.exports = { createRateLimiter, checkoutLimiter, authLimiter, codeLimiter };

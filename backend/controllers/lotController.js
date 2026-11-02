@@ -3,7 +3,7 @@ const Event = require("../models/Event");
 const Lot = require("../models/Lot");
 const Purchase = require("../models/Purchase");
 const { sequelize } = require("../config/database");
-const { parseLotInput } = require("../utils/lots");
+const { normalizeCode, parseLotInput } = require("../utils/lots");
 
 /**
  * Buscar el evento y verificar que el usuario logueado puede administrarlo.
@@ -93,6 +93,7 @@ const updateLot = async (req, res) => {
       const plain = {};
       if (data.name) plain.name = data.name;
       if (data.price !== undefined) plain.price = data.price;
+      if (data.accessCode !== undefined) plain.accessCode = data.accessCode;
       if (Object.keys(plain).length) await lot.update(plain, { transaction });
 
       if (req.body.soldOut === true) {
@@ -173,4 +174,32 @@ const deleteLot = async (req, res) => {
   }
 };
 
-module.exports = { addLot, updateLot, deleteLot };
+/**
+ * @desc    Ver los lotes que habilita un código de acceso
+ * @route   POST /api/events/:id/unlock
+ * @access  Public (limitado por IP para frenar el adivinado de códigos)
+ * @body    { code }
+ */
+const unlockLots = async (req, res) => {
+  try {
+    const code = normalizeCode(req.body.code);
+    const isId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.id);
+    const event = isId ? await Event.findByPk(req.params.id) : null;
+    const lots =
+      code && event && event.status === "published"
+        ? await Lot.findAll({
+            where: { eventId: event.id, accessCode: code },
+            attributes: ["id", "name", "price", "ticketsAvailable"],
+            order: [["position", "ASC"], ["createdAt", "ASC"]],
+          })
+        : [];
+    if (!lots.length) {
+      return res.status(400).json({ success: false, message: "El código no es válido para este evento" });
+    }
+    res.json({ success: true, lots });
+  } catch (error) {
+    serverError(res, error, "Error al validar el código");
+  }
+};
+
+module.exports = { addLot, updateLot, deleteLot, unlockLots };

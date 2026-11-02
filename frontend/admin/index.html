@@ -58,11 +58,11 @@ async function viewEvents() {
     $('view').innerHTML = `<h2>Eventos</h2>` + (events.length
       ? `<div class="grid">${events.map((e, i) => `
         <div class="card">
-          <h3>${esc(e.title)} <span class="tag ${e.status === 'published' ? 'completed' : 'failed'}">${eventStatus[e.status]}</span></h3>
+          <h3>${esc(e.title)} <span class="tag ${e.status === 'published' ? 'completed' : 'failed'}">${eventStatus[e.status]}</span>${e.adultsOnly ? ' <span class="tag">+18</span>' : ''}</h3>
           <div class="muted">📅 ${new Date(e.date).toLocaleString('es-AR')}<br>📍 ${esc(e.location)}<br>🔗 <a href="/e/${esc(e.slug)}" target="_blank">${location.origin}/e/${esc(e.slug)}</a></div>
           <div class="lots">${e.lots.map(l => `
             <div class="lot ${l.ticketsAvailable < 1 ? 'sold' : ''}">
-              <b>${esc(l.name)}</b>
+              <b>${esc(l.name)}${l.accessCode ? ` <span class="tag">🔒 ${esc(l.accessCode)}</span>` : ''}</b>
               <span class="muted">${l.quantity - l.ticketsAvailable}/${l.quantity} · ${money(l.price)}
                 ${l.ticketsAvailable < 1 ? '<span class="tag soldout">Agotada</span>' : ''}</span>
             </div>`).join('')}</div>
@@ -102,6 +102,7 @@ async function viewEdit(id) {
         <div><label>Fecha y hora</label><input id="eDate" type="datetime-local" required value="${e.date ? toLocalInput(e.date) : ''}"></div>
         <div><label>Lugar</label><input id="eLoc" required value="${esc(e.location)}"></div>
       </div>
+      <label class="choice"><input id="eAdults" type="checkbox" ${e.adultsOnly ? 'checked' : ''}> Solo mayores de 18: al comprar, el visitante tiene que aceptar que es mayor de edad</label>
       <label>Estado</label>
       <select id="eStatus">
         ${Object.entries(eventStatus).map(([v, t]) => `<option value="${v}" ${e.status === v ? 'selected' : ''}>${t}</option>`).join('')}
@@ -144,6 +145,7 @@ async function viewEdit(id) {
           <div class="grow"><label>Lote</label><input id="lName_${l.id}" value="${esc(l.name)}" maxlength="60"></div>
           <div><label>Precio</label><input id="lPrice_${l.id}" type="number" min="0" step="0.01" value="${Number(l.price)}"></div>
           <div><label>Cantidad asignada</label><input id="lQty_${l.id}" type="number" min="${sold}" step="1" value="${l.quantity}"></div>
+          <div class="full"><label>Código de acceso (opcional): con código, el lote solo lo ve y lo compra quien lo tenga</label><input id="lCode_${l.id}" maxlength="40" value="${esc(l.accessCode)}"></div>
         </div>
         <p class="muted" style="margin:6px 0">Vendidas: <b>${sold}</b> · Disponibles: <b>${l.ticketsAvailable}</b>
           ${l.ticketsAvailable < 1 ? '<span class="tag soldout">Agotada</span>' : ''}</p>
@@ -162,6 +164,7 @@ async function viewEdit(id) {
         <div class="grow"><label>Lote</label><input id="nName" list="lotNames" maxlength="60" placeholder="EARLY, VIP…"></div>
         <div><label>Precio</label><input id="nPrice" type="number" min="0" step="0.01"></div>
         <div><label>Cantidad</label><input id="nQty" type="number" min="1" step="1"></div>
+        <div class="full"><label>Código de acceso (opcional): con código, el lote solo lo ve y lo compra quien lo tenga</label><input id="nCode" maxlength="40"></div>
       </div>
       <button type="button" onclick="addLotBtn('${e.id}')">Agregar lote</button>
     </div>
@@ -177,7 +180,8 @@ function addLotRow(name = '') {
     <div class="grow"><label>Lote</label><input class="lName" list="lotNames" value="${esc(name)}" placeholder="EARLY, VIP…" required maxlength="60"></div>
     <div><label>Precio</label><input class="lPrice" type="number" min="0" step="0.01" required></div>
     <div><label>Cantidad</label><input class="lQty" type="number" min="1" step="1" required></div>
-    <div class="fit"><button type="button" class="ghost danger" title="Quitar" onclick="removeLotRow(this)">✕</button></div>`;
+    <div class="fit"><button type="button" class="ghost danger" title="Quitar" onclick="removeLotRow(this)">✕</button></div>
+    <div class="full"><label>Código de acceso (opcional): con código, el lote solo lo ve y lo compra quien lo tenga</label><input class="lCode" maxlength="40"></div>`;
   $('lotRows').appendChild(row);
 }
 function removeLotRow(btn) {
@@ -234,7 +238,7 @@ async function submitEvent(ev, id) {
   const body = {
     title: $('eTitle').value, description: $('eDesc').value,
     date: new Date($('eDate').value).toISOString(), location: $('eLoc').value,
-    status: $('eStatus').value,
+    status: $('eStatus').value, adultsOnly: $('eAdults').checked,
   };
   if (coverData !== undefined) body.imageUrl = coverData;
   // Al crear van los lotes. Al editar solo los datos del evento: los lotes (precio y
@@ -244,6 +248,7 @@ async function submitEvent(ev, id) {
       name: r.querySelector('.lName').value.trim(),
       price: Number(r.querySelector('.lPrice').value),
       quantity: Number(r.querySelector('.lQty').value),
+      accessCode: r.querySelector('.lCode').value,
     }));
   }
   try {
@@ -256,7 +261,7 @@ async function submitEvent(ev, id) {
 async function saveLot(eventId, lotId) {
   try {
     await api(`/events/${eventId}/lots/${lotId}`, { method: 'PUT', auth: true, body: {
-      name: $('lName_' + lotId).value, price: Number($('lPrice_' + lotId).value), quantity: Number($('lQty_' + lotId).value),
+      name: $('lName_' + lotId).value, price: Number($('lPrice_' + lotId).value), quantity: Number($('lQty_' + lotId).value), accessCode: $('lCode_' + lotId).value,
     }});
     await viewEdit(eventId);
     flash('Lote actualizado');
@@ -282,7 +287,7 @@ async function addLotBtn(eventId) {
   try {
     if ($('nPrice').value === '') throw new Error('Completá el precio del lote');
     await api(`/events/${eventId}/lots`, { method: 'POST', auth: true, body: {
-      name: $('nName').value, price: Number($('nPrice').value), quantity: Number($('nQty').value),
+      name: $('nName').value, price: Number($('nPrice').value), quantity: Number($('nQty').value), accessCode: $('nCode').value,
     }});
     await viewEdit(eventId);
     flash('Lote agregado');
@@ -297,7 +302,7 @@ async function viewBuyers(eventId) {
   $('view').innerHTML = '<p class="muted">Cargando…</p>';
   try {
     const [{ event }, { purchases }] = await Promise.all([
-      api('/events/' + eventId),
+      api('/events/' + eventId, { auth: true }),
       api('/purchases/event/' + eventId, { auth: true }),
     ]);
     buyers = { event, purchases };

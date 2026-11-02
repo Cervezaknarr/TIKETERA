@@ -77,6 +77,18 @@ body.ev {
 .ev-btn:active:not(:disabled) { transform:scale(.97); }
 .ev-note { color:var(--muted); font-size:var(--fs-xs); margin:14px 0 0; text-align:center; }
 
+/* Código de acceso a lotes */
+.ev-code { display:flex; gap:8px; }
+.ev-code input { flex:1; min-width:0; text-transform:uppercase; }
+.ev-code button { flex:0 0 auto; }
+
+/* Cartel de mayores de 18 */
+.ev-dialog { width:min(420px,calc(100vw - 32px)); border:0; border-radius:22px; padding:24px; background:var(--card); color:var(--text); text-align:center; }
+.ev-dialog::backdrop { background:rgba(0,0,0,.55); }
+.ev-dialog h2 { font-size:var(--fs-l); letter-spacing:-.02em; margin:0 0 10px; }
+.ev-dialog p { color:var(--muted); font-size:var(--fs-s); margin:0 0 18px; }
+.ev-dialog button { display:block; width:100%; margin-top:8px; }
+
 /* Mis entradas bajo /e/<slug>: mismos tamaños que el resto */
 .ev .muted, .ev .msg { font-size:var(--fs-s); }
 .ev .tag { font-size:var(--fs-xs); }
