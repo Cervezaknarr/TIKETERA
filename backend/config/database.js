@@ -3,12 +3,14 @@ require('dotenv').config();
 
 // Los tests usan DATABASE_URL=sqlite::memory: para no depender de un Postgres
 const isSqlite = (process.env.DATABASE_URL || '').startsWith('sqlite:');
+// DB_SSL=false es para un Postgres local sin SSL. En producción se ignora: siempre va con SSL
+const useSsl = process.env.DB_SSL !== 'false' || process.env.NODE_ENV === 'production';
 
 // Crear una nueva instancia de Sequelize
 const sequelize = new Sequelize(process.env.DATABASE_URL, {
   dialect: isSqlite ? 'sqlite' : 'postgres',
   logging: false, // Establece en true para ver los logs SQL en la consola
-  dialectOptions: isSqlite ? {} : {
+  dialectOptions: isSqlite || !useSsl ? {} : {
     ssl: {
       require: process.env.NODE_ENV === 'production', // Habilitar SSL en producción
       rejectUnauthorized: false // Necesario para algunas plataformas de alojamiento

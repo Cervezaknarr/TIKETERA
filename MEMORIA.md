@@ -46,6 +46,10 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - **Límites conocidos:** el código es compartido y reutilizable (el único tope es el cupo del lote); guardado en texto plano para que el admin lo vea. El +18 es una declaración del comprador: no se verifica ni queda registrada en la compra.
 - **Al desplegar:** agrega columnas (`Lot.accessCode`, `Event.adultsOnly`): NO tener `DB_SYNC_ALTER=false`.
 
+### SSL configurable para Postgres local (2026-11-02, misma rama) [SEGURIDAD]
+- `DB_SSL=false` conecta sin SSL a un Postgres local. Sin definir sigue con SSL, y con `NODE_ENV=production` se ignora: siempre va con SSL.
+- Ya estaba así y no se cambió: `rejectUnauthorized: false`, la conexión va cifrada pero no verifica el certificado del servidor.
+
 ## Decisiones tomadas
 - **Pasarela elegida: Mercado Pago.** Nave exige CUIT y el usuario no tiene. Nave queda implementado por si se consigue.
 - **Cobro del primer evento:** por ahora con la cuenta del usuario, solo para probar y dejar todo configurado. Después se usa la cuenta del organizador, o Marketplace de Mercado Pago si hay varios organizadores. Cambiar de cuenta es cambiar `MERCADOPAGO_ACCESS_TOKEN`.

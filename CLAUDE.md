@@ -16,7 +16,7 @@ node --test test/lots.test.js            # un archivo
 node --test --test-name-pattern="slug" test/slug.test.js   # un test por nombre
 ```
 
-La web se abre en `http://localhost:5000`: el backend sirve el frontend. Para correr sin Postgres, `DATABASE_URL=sqlite::memory:` (con `sqlite3`); ojo que `sequelize.sync({ alter: true })` falla en SQLite con datos ya cargados, así que usar una base nueva cada vez. `PAYMENT_PROVIDER=mock` simula la pasarela (bloqueado con `NODE_ENV=production`).
+La web se abre en `http://localhost:5000`: el backend sirve el frontend. Para correr sin Postgres, `DATABASE_URL=sqlite::memory:` (con `sqlite3`); ojo que `sequelize.sync({ alter: true })` falla en SQLite con datos ya cargados, así que usar una base nueva cada vez. Para Postgres local sin SSL, `DB_SSL=false` (se ignora con `NODE_ENV=production`). `PAYMENT_PROVIDER=mock` simula la pasarela (bloqueado con `NODE_ENV=production`).
 
 ## Arquitectura
 
