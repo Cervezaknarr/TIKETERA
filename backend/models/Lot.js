@@ -40,12 +40,6 @@ const Lot = sequelize.define("Lot", {
     allowNull: false,
     validate: { min: 0 },
   },
-  // Con código, el lote no se muestra al público: solo lo ve y lo compra quien
-  // tenga el código (en mayúsculas, ver utils/lots.js). null = lote público
-  accessCode: {
-    type: DataTypes.STRING(40),
-    allowNull: true,
-  },
   // Orden en que se muestran los lotes
   position: {
     type: DataTypes.INTEGER,

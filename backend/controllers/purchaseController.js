@@ -8,7 +8,6 @@ const { sequelize } = require("../config/database");
 const { itemsOf, pendingByLot, releaseStock, reserveItems } = require("../utils/purchases");
 const QRCode = require("qrcode");
 const { generateTicketCode } = require("../utils/ticketCode");
-const { normalizeCode } = require("../utils/lots");
 const { sendTicketsEmail } = require("../utils/mailer");
 const { getProvider } = require("../utils/payments");
 const { paymentWindowMinutes } = require("../utils/paymentWindow");
@@ -41,15 +40,15 @@ const itemsSummary = (items) => {
  *          La compra puede llevar varios lotes (un carrito) y se paga de una vez
  * @route   POST /api/purchases/checkout
  * @access  Public
- * @body    { eventId, buyerName, buyerEmail, ageConfirmed?, items: [{ lotId, quantity, code? }] }
- *          `code` es para los lotes con código de acceso y `ageConfirmed` para los
- *          eventos de mayores de 18. El formato anterior { lotId, quantity } sigue funcionando
+ * @body    { eventId, buyerName, buyerEmail, ageConfirmed?, items: [{ lotId, quantity }] }
+ *          `ageConfirmed` es para los eventos de mayores de 18. El formato anterior
+ *          { lotId, quantity } sigue funcionando
  */
 const createCheckoutSession = async (req, res) => {
   try {
     const { eventId, buyerEmail, buyerName } = req.body;
     const requested = req.body.items === undefined
-      ? [{ lotId: req.body.lotId, quantity: req.body.quantity, code: req.body.code }]
+      ? [{ lotId: req.body.lotId, quantity: req.body.quantity }]
       : req.body.items;
 
     // Verificar campos obligatorios
@@ -112,18 +111,12 @@ const createCheckoutSession = async (req, res) => {
     // falta indicarlo. Un mismo lote repetido se suma
     const lots = await Lot.findAll({ where: { eventId } });
     const wanted = new Map();
-    for (const { lotId, quantity, code } of requested) {
+    for (const { lotId, quantity } of requested) {
       const lot = lotId ? lots.find((l) => l.id === lotId) : lots.length === 1 ? lots[0] : null;
       if (!lot) {
         return res.status(400).json({
           success: false,
           message: lotId ? "El lote no pertenece a este evento" : "Elegí un tipo de entrada",
-        });
-      }
-      if (lot.accessCode && normalizeCode(code) !== lot.accessCode) {
-        return res.status(403).json({
-          success: false,
-          message: "El código no es válido para este tipo de entrada",
         });
       }
       wanted.set(lot.id, { lot, quantity: (wanted.get(lot.id)?.quantity || 0) + quantity });

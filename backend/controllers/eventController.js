@@ -31,7 +31,7 @@ const serverError = (res, error, message) => {
  * @route   POST /api/events
  * @access  Private
  * @body    { title, description, date, location, imageUrl?, adultsOnly?,
- *            lots: [{ name, price, quantity, accessCode? }] }
+ *            lots: [{ name, price, quantity }] }
  *          Sin `lots`, `ticketPrice` + `ticketsAvailable` crean un lote "General"
  */
 const createEvent = async (req, res) => {
@@ -116,7 +116,7 @@ const createEvent = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      event: await withLots(event, { isAdmin: true }),
+      event: await withLots(event),
     });
   } catch (error) {
     serverError(res, error, "Error al crear el evento");
@@ -148,7 +148,7 @@ const getEventById = async (req, res) => {
     if (event && (event.status === "published" || req.isAdmin)) {
       res.json({
         success: true,
-        event: await withLots(event, { isAdmin: req.isAdmin }),
+        event: await withLots(event),
       });
     } else {
       res.status(404).json({
@@ -208,7 +208,7 @@ const getEvents = async (req, res) => {
 
     res.json({
       success: true,
-      events: await withLots(rows, { isAdmin: req.isAdmin }),
+      events: await withLots(rows),
       pagination: {
         totalItems: count,
         totalPages: Math.ceil(count / limit),
@@ -283,7 +283,7 @@ const updateEvent = async (req, res) => {
 
     res.json({
       success: true,
-      event: await withLots(event, { isAdmin: true }),
+      event: await withLots(event),
     });
   } catch (error) {
     serverError(res, error, "Error al actualizar el evento");

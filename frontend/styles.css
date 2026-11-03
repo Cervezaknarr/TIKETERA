@@ -64,8 +64,6 @@ button.danger { color:var(--err); border-color:var(--err); }
 .lotrow label { margin-top:0; }
 .lotrow > .grow { flex:2; }
 .lotrow > .fit { flex:0 0 auto; }
-.lotrow { flex-wrap:wrap; }
-.lotrow > .full { flex:1 0 100%; }
 .choice { display:flex; align-items:center; gap:10px; padding:10px 12px; margin:6px 0; border:1px solid var(--border); border-radius:10px; cursor:pointer; }
 .choice input { width:auto; margin:0; }
 .choice.sold { opacity:.55; cursor:default; }
