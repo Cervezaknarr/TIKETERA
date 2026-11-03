@@ -92,7 +92,9 @@ let currentEvent = null;
 let cart = {};                 // lotId -> cantidad
 let checkoutTimer = null;
 const accessCodes = new Set(); // códigos que ingresó el comprador
-let ageAccepted = false;       // ya aceptó ser mayor de 18 (evento +18)
+let ageAccepted = false;       // marcó la casilla de términos (evento +18)
+// Texto de la casilla de términos y condiciones de los eventos +18
+const ADULTS_TERMS = 'Acepto los términos y condiciones: declaro que todos los asistentes de esta compra son mayores de 18 años, que pueden pedirles un documento al ingresar, y que cada entrada (QR) es para una persona y vale para un solo ingreso.';
 
 const cartLines = () => (currentEvent ? currentEvent.lots : [])
   .filter(l => cart[l.id] > 0).map(l => ({ lot: l, quantity: cart[l.id] }));
@@ -156,14 +158,7 @@ async function viewBuy(id) {
         <button class="ev-btn" id="bPay" disabled>Comprar</button>
       </div>
     </form>
-  </div>
-  ${e.adultsOnly ? `
-  <dialog id="ageDialog" class="ev-dialog" aria-labelledby="ageTitle">
-    <h2 id="ageTitle">🔞 Evento para mayores de 18 años</h2>
-    <p>Para comprar entradas tenés que confirmar que sos mayor de 18 años.</p>
-    <button type="button" class="ev-btn" onclick="acceptAge()">Acepto, soy mayor de 18 años</button>
-    <button type="button" class="ghost" onclick="$('ageDialog').close()">Cancelar</button>
-  </dialog>` : ''}`;
+  </div>`;
   updTotal();
 }
 
@@ -207,14 +202,6 @@ function updTotal() {
 function goCheckout(ev) {
   ev.preventDefault();
   if (!cartCount()) return;
-  if (currentEvent.adultsOnly && !ageAccepted) return $('ageDialog').showModal();
-  history.pushState({ step: 'resumen' }, '', '#/resumen');
-  viewCheckout();
-}
-
-function acceptAge() {
-  ageAccepted = true;
-  $('ageDialog').close();
   history.pushState({ step: 'resumen' }, '', '#/resumen');
   viewCheckout();
 }
@@ -253,6 +240,11 @@ function viewCheckout() {
       <label for="bEmail">Email</label><input id="bEmail" type="email" required autocomplete="email">
       <label for="bEmail2">Repetir email</label><input id="bEmail2" type="email" required autocomplete="off">
       <p class="ev-note">Verificá que tu email sea correcto: ahí recibís las entradas. Al continuar te llevamos a la pasarela de pago. En modo de prueba el pago se aprueba automáticamente.</p>
+      ${e.adultsOnly ? `
+      <label class="ev-terms">
+        <input id="bTerms" type="checkbox" required ${ageAccepted ? 'checked' : ''} onchange="ageAccepted = this.checked">
+        <span>${esc(ADULTS_TERMS)}</span>
+      </label>` : ''}
       <div class="ev-pay">
         <div class="ev-total"><small>Total</small><b>${money(cartTotal())}</b></div>
         <button class="ev-btn" id="bFinish">Finalizar compra</button>

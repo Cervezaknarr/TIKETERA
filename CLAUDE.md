@@ -29,7 +29,7 @@ La web se abre en `http://localhost:5000`: el backend sirve el frontend. Para co
 - El precio y el cupo viven en el `Lot`, no en el evento (`Event.ticketPrice/ticketsAvailable` están en desuso; `utils/migrateLots.js` migra eventos viejos al arrancar).
 - Una compra puede llevar **varios lotes** (carrito: `items: [{ lotId, quantity }]` en el checkout). Cada línea es un `PurchaseItem` con `lotName` y `unitPrice` tal como estaban al comprar, y cada `Ticket` guarda su lote. Con un solo lote, `Purchase.lotId/lotName/unitPrice` también se completan (formato anterior); las compras viejas no tienen líneas y `itemsOf()` usa el lote de la propia compra.
 - Un `Lot` con `accessCode` no se muestra al público (`withLots` lo filtra salvo para el admin): se habilita con `POST /api/events/:id/unlock` y el checkout vuelve a exigir el código en cada línea (`items[].code`).
-- Un `Event` con `adultsOnly` exige `ageConfirmed: true` en el checkout; la página muestra el cartel al tocar Comprar.
+- Un `Event` con `adultsOnly` exige `ageConfirmed: true` en el checkout; el resumen de la compra muestra una casilla obligatoria de términos (`ADULTS_TERMS` en `frontend/index.html`).
 - El evento se identifica por `id` o por `slug` (único, generado del título en un hook de `Event` con `utils/slug.js`); `GET /api/events/:id` acepta ambos. La portada (`imageUrl`) es una data URL que el admin reduce en el navegador.
 
 **Compra y pago** (`controllers/purchaseController.js`, `utils/purchases.js`, `utils/paymentWindow.js`): el checkout reserva cupo en una transacción (`reserveStock`) y crea la compra `pending`; la pasarela avisa por webhook y recién ahí se emiten los `Ticket`. Un barrido cada 5 minutos libera el cupo de compras vencidas. Reglas que no son obvias:
