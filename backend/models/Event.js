@@ -61,6 +61,13 @@ const Event = sequelize.define("Event", {
     allowNull: false,
     defaultValue: false,
   },
+  // Edad mínima que se muestra en la etiqueta (+18, +21...). null = sin etiqueta.
+  // Los eventos viejos tienen adultsOnly=true y minAge=null: se leen como +18.
+  minAge: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    validate: { min: 1, max: 99 },
+  },
   status: {
     type: DataTypes.ENUM("draft", "published", "cancelled"),
     defaultValue: "published",

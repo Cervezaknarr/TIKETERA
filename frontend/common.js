@@ -3,6 +3,8 @@
 const API = (localStorage.getItem('ticketera_api') || location.origin) + '/api';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// Edad mínima de un evento (null si no tiene). Los eventos viejos con adultsOnly sin minAge valen 18.
+const ageOf = (e) => e.minAge || (e.adultsOnly ? 18 : null);
 const money = (n) => '$' + Number(n).toLocaleString('es-AR');
 
 function flash(text, type = 'ok') {

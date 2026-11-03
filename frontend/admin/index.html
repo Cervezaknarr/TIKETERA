@@ -59,7 +59,7 @@ async function viewEvents() {
     $('view').innerHTML = `<h2>Eventos</h2>` + (events.length
       ? `<div class="grid">${events.map((e, i) => `
         <div class="card">
-          <h3>${esc(e.title)} <span class="tag ${e.status === 'published' ? 'completed' : 'failed'}">${eventStatus[e.status]}</span>${e.adultsOnly ? ' <span class="tag">+18</span>' : ''}</h3>
+          <h3>${esc(e.title)} <span class="tag ${e.status === 'published' ? 'completed' : 'failed'}">${eventStatus[e.status]}</span>${ageOf(e) ? ` <span class="tag">+${ageOf(e)}</span>` : ''}</h3>
           <div class="muted">📅 ${new Date(e.date).toLocaleString('es-AR')}<br>📍 ${esc(e.location)}<br>🔗 <a href="/e/${esc(e.slug)}" target="_blank">${location.origin}/e/${esc(e.slug)}</a></div>
           <div class="lots">${e.lots.map(l => `
             <div class="lot ${l.ticketsAvailable < 1 ? 'sold' : ''}">
@@ -103,7 +103,10 @@ async function viewEdit(id) {
         <div><label>Fecha y hora</label><input id="eDate" type="datetime-local" required value="${e.date ? toLocalInput(e.date) : ''}"></div>
         <div><label>Lugar</label><input id="eLoc" required value="${esc(e.location)}"></div>
       </div>
-      <label class="choice"><input id="eAdults" type="checkbox" ${e.adultsOnly ? 'checked' : ''}> Solo mayores de 18: muestra la etiqueta en el evento</label>
+      <label>Edad mínima (opcional)</label>
+      <input id="eMinAge" type="number" min="1" max="99" step="1" list="eAgeOpts" placeholder="Sin restricción" value="${ageOf(e) || ''}">
+      <datalist id="eAgeOpts"><option value="16"><option value="18"><option value="21"><option value="23"></datalist>
+      <p class="muted" style="margin:4px 0 12px">Muestra la etiqueta «+edad» en el evento. No cambia la compra. Vacío = sin etiqueta.</p>
       <label>Estado</label>
       <select id="eStatus">
         ${Object.entries(eventStatus).map(([v, t]) => `<option value="${v}" ${e.status === v ? 'selected' : ''}>${t}</option>`).join('')}
@@ -236,7 +239,7 @@ async function submitEvent(ev, id) {
   const body = {
     title: $('eTitle').value, description: $('eDesc').value,
     date: new Date($('eDate').value).toISOString(), location: $('eLoc').value,
-    status: $('eStatus').value, adultsOnly: $('eAdults').checked,
+    status: $('eStatus').value, minAge: $('eMinAge').value === '' ? null : Number($('eMinAge').value),
   };
   if (coverData !== undefined) body.imageUrl = coverData;
   // Al crear van los lotes. Al editar solo los datos del evento: los lotes (precio y

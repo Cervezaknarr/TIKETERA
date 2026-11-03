@@ -17,6 +17,25 @@ const isValidImage = (value) =>
   /^(data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+|https?:\/\/\S+)$/.test(value);
 const INVALID_IMAGE ="La portada tiene que ser una imagen JPG, PNG o WebP de hasta 1,5 MB";
 
+// Edad mínima del evento. Acepta minAge (entero 1-99, o null/"" para quitarla) y,
+// por compatibilidad, adultsOnly (true = 18, false = sin etiqueta).
+// minAge undefined en el resultado = no tocar el valor actual.
+const parseAgeFields = ({ minAge, adultsOnly }) => {
+  if (minAge !== undefined) {
+    if (minAge === null || minAge === "") return { minAge: null };
+    const n = typeof minAge === "string" && /^\d+$/.test(minAge.trim()) ? Number(minAge) : minAge;
+    if (!Number.isInteger(n) || n < 1 || n > 99) {
+      return { error: "La edad mínima tiene que ser un número entero entre 1 y 99" };
+    }
+    return { minAge: n };
+  }
+  if (adultsOnly !== undefined) {
+    if (typeof adultsOnly !== "boolean") return { error: "El campo de edad mínima es inválido" };
+    return { minAge: adultsOnly ? 18 : null };
+  }
+  return { minAge: undefined };
+};
+
 const serverError = (res, error, message) => {
   console.error(error);
   res.status(500).json({
@@ -57,10 +76,8 @@ const createEvent = async (req, res) => {
     if (imageUrl && !isValidImage(imageUrl)) {
       return res.status(400).json({ success: false, message: INVALID_IMAGE });
     }
-    const { adultsOnly } = req.body;
-    if (adultsOnly !== undefined && typeof adultsOnly !== "boolean") {
-      return res.status(400).json({ success: false, message: "El campo de mayores de 18 es inválido" });
-    }
+    const age = parseAgeFields(req.body);
+    if (age.error) return res.status(400).json({ success: false, message: age.error });
 
     // Lotes: la lista nueva, o el precio y cupo únicos del formato anterior
     let lotsInput = req.body.lots;
@@ -96,7 +113,8 @@ const createEvent = async (req, res) => {
           date,
           location,
           imageUrl: imageUrl || null,
-          adultsOnly: adultsOnly === true,
+          adultsOnly: age.minAge != null,
+          minAge: age.minAge ?? null,
           status,
           userId: req.user.id, // El userId viene del middleware de autenticación
         },
@@ -246,7 +264,7 @@ const updateEvent = async (req, res) => {
       });
     }
 
-    const { title, description, date, location, imageUrl, status, adultsOnly } = req.body;
+    const { title, description, date, location, imageUrl, status } = req.body;
 
     // Los textos obligatorios no pueden quedar vacíos
     for (const [field, value] of Object.entries({ title, description, location })) {
@@ -266,9 +284,8 @@ const updateEvent = async (req, res) => {
     if (status !== undefined && !EVENT_STATUSES.includes(status)) {
       return res.status(400).json({ success: false, message: "Estado del evento inválido" });
     }
-    if (adultsOnly !== undefined && typeof adultsOnly !== "boolean") {
-      return res.status(400).json({ success: false, message: "El campo de mayores de 18 es inválido" });
-    }
+    const age = parseAgeFields(req.body);
+    if (age.error) return res.status(400).json({ success: false, message: age.error });
 
     // Solo actualizar los campos proporcionados
     if (title !== undefined) event.title = title.trim();
@@ -277,7 +294,10 @@ const updateEvent = async (req, res) => {
     if (location !== undefined) event.location = location.trim();
     if (imageUrl !== undefined) event.imageUrl = imageUrl || null;
     if (status !== undefined) event.status = status;
-    if (adultsOnly !== undefined) event.adultsOnly = adultsOnly;
+    if (age.minAge !== undefined) {
+      event.minAge = age.minAge;
+      event.adultsOnly = age.minAge != null;
+    }
 
     await event.save();
 

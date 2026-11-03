@@ -103,3 +103,27 @@ test("el admin activa y desactiva +18; el público lo ve; un valor inválido se 
   const off = await call("PUT", `/api/events/${event.id}`, { token: adminToken, body: { adultsOnly: false } });
   assert.equal(off.body.event.adultsOnly, false);
 });
+
+test("la edad mínima es personalizable (+21, +23), se valida y se puede quitar", async () => {
+  const event = await newEvent();
+  const put = (body) => call("PUT", `/api/events/${event.id}`, { token: adminToken, body });
+
+  const r21 = await put({ minAge: 21 });
+  assert.equal(r21.body.event.minAge, 21);
+  assert.equal(r21.body.event.adultsOnly, true);
+  assert.equal((await call("GET", `/api/events/${event.id}`)).body.event.minAge, 21);
+
+  assert.equal((await put({ minAge: "23" })).body.event.minAge, 23);
+
+  for (const bad of [0, 100, 17.5, "abc", -3]) {
+    assert.equal((await put({ minAge: bad })).status, 400, `minAge ${bad}`);
+  }
+  assert.equal((await call("GET", `/api/events/${event.id}`)).body.event.minAge, 23);
+
+  const off = await put({ minAge: null });
+  assert.equal(off.body.event.minAge, null);
+  assert.equal(off.body.event.adultsOnly, false);
+
+  // Compatibilidad: adultsOnly:true equivale a +18
+  assert.equal((await put({ adultsOnly: true })).body.event.minAge, 18);
+});

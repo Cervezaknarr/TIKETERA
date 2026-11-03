@@ -46,7 +46,7 @@ async function viewEvents() {
     $('view').innerHTML = `<h2>Próximos eventos</h2>` + (events.length
       ? `<div class="grid">${events.map(e => `
         <div class="card">
-          <h3>${esc(e.title)}${e.adultsOnly ? ' <span class="tag">+18</span>' : ''}</h3>
+          <h3>${esc(e.title)}${ageOf(e) ? ` <span class="tag">+${ageOf(e)}</span>` : ''}</h3>
           <div class="muted">📅 ${esc(fmtWhen(e.date))}<br>📍 ${esc(e.location)}</div>
           <p>${esc(e.description)}</p>
           <div class="lots">${e.lots.map(l => `
@@ -134,7 +134,7 @@ async function viewBuy(id) {
       <div class="ev-meta">
         <span class="ev-chip">📅 ${esc(when)}</span>
         <span class="ev-chip">📍 ${esc(e.location)}</span>
-        ${e.adultsOnly ? '<span class="ev-chip">🔞 Solo mayores de 18</span>' : ''}
+        ${ageOf(e) ? `<span class="ev-chip">🔞 Solo mayores de ${ageOf(e)}</span>` : ''}
       </div>
       <p class="ev-desc">${esc(e.description)}</p>
     </section>

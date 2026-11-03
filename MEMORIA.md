@@ -196,3 +196,7 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - Backend: `POST /api/purchases/checkout` acepta `items: [{ lotId, quantity }]` (el formato `{ lotId, quantity }` sigue andando). Nuevo modelo `PurchaseItem` (una línea por lote) y `Ticket.lotId/lotName` (cada entrada sabe de qué tipo es). Reserva todo o nada, con los lotes bloqueados en orden; el tope por compra cuenta todas las entradas del carrito. Webhook, vencimiento y reserva tardía trabajan por línea (`itemsOf`, `reserveItems` en `utils/purchases.js`). Las pasarelas reciben `items` (Mercado Pago y Nave arman una línea por lote).
 - El cupo se reserva al **finalizar la compra**, no al pasar al resumen: el reloj del resumen es visual. Passline reserva al pasar al resumen; se decidió dejarlo como estaba.
 - **Al desplegar:** crea la tabla `PurchaseItems` y las columnas `Tickets.lotId/lotName`: `DB_SYNC_ALTER` no puede estar en `false` ese día. No probado contra Postgres ni contra Mercado Pago real (los tests usan SQLite y una pasarela simulada). 90 tests pasan.
+
+### Edad mínima personalizable (2026-11-03)
+- Nueva columna `Event.minAge` (entero 1-99, null = sin etiqueta); el admin la carga en un campo numérico (sugeridas 16/18/21/23) y la API acepta `minAge`, o `adultsOnly` por compatibilidad (true = 18). Eventos viejos con `adultsOnly` se leen como +18 sin migrar datos.
+- **Al desplegar:** agrega la columna `Event.minAge`: NO tener `DB_SYNC_ALTER=false`.
