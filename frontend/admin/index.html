@@ -170,7 +170,41 @@ async function viewEdit(id) {
       </div>
       <button type="button" onclick="addLotBtn('${e.id}')">Agregar lote</button>
     </div>
+
+    <h3>Packs con descuento</h3>
+    <p class="muted">Promos por cantidad: el comprador elige “Pack x5” y recibe 5 entradas (cada una con su QR) con el % de descuento sobre el precio del lote. Por ejemplo, 5 entradas al 5% o 10 al 10%. Cambiar un pack solo afecta las compras nuevas.</p>
+    ${(e.packs || []).map(p => `
+    <div class="card" style="margin-bottom:10px">
+      <div class="row lotrow">
+        <div class="grow"><label>Tipo de entrada</label><select id="pLot_${p.id}">${packLotOptions(e, p.lotId)}</select></div>
+        <div><label>Entradas por pack</label><input id="pQty_${p.id}" type="number" min="2" max="10" step="1" value="${p.quantity}"></div>
+        <div><label>Descuento (%)</label><input id="pPct_${p.id}" type="number" min="0.01" max="90" step="0.01" value="${Number(p.discountPercent)}"></div>
+      </div>
+      <p class="muted" style="margin:6px 0">${packPreview(e, p)}</p>
+      <button type="button" onclick="savePack('${e.id}','${p.id}')">Guardar pack</button>
+      <button type="button" class="ghost danger" onclick="deletePackBtn('${e.id}','${p.id}')">Borrar</button>
+    </div>`).join('') || '<p class="muted">Todavía no hay packs.</p>'}
+
+    <div class="card">
+      <h4 style="margin:0">Agregar un pack</h4>
+      <div class="row lotrow">
+        <div class="grow"><label>Tipo de entrada</label><select id="nPackLot">${packLotOptions(e)}</select></div>
+        <div><label>Entradas por pack</label><input id="nPackQty" type="number" min="2" max="10" step="1" value="5"></div>
+        <div><label>Descuento (%)</label><input id="nPackPct" type="number" min="0.01" max="90" step="0.01" value="5"></div>
+      </div>
+      <button type="button" onclick="addPackBtn('${e.id}')">Agregar pack</button>
+    </div>
   </div>`;
+}
+
+const packLotOptions = (e, selected) => e.lots.map(l =>
+  `<option value="${l.id}" ${l.id === selected ? 'selected' : ''}>${esc(l.name)} (${money(l.price)})</option>`).join('');
+// "5 × $950 = $4.750 (antes $5.000)" para ver el precio final del pack
+function packPreview(e, p) {
+  const lot = e.lots.find(l => l.id === p.lotId);
+  if (!lot) return '';
+  const unit = Math.round(Number(lot.price) * (100 - Number(p.discountPercent))) / 100;
+  return `Precio del pack: <b>${money(unit * p.quantity)}</b> (${p.quantity} × ${money(unit)}) · sin descuento ${money(lot.price * p.quantity)}`;
 }
 
 
@@ -265,6 +299,32 @@ async function saveLot(eventId, lotId) {
     }});
     await viewEdit(eventId);
     flash('Lote actualizado');
+  } catch (err) { flash(err.message, 'err'); }
+}
+async function addPackBtn(eventId) {
+  try {
+    await api(`/events/${eventId}/packs`, { method: 'POST', auth: true, body: {
+      lotId: $('nPackLot').value, quantity: Number($('nPackQty').value), discountPercent: Number($('nPackPct').value),
+    }});
+    await viewEdit(eventId);
+    flash('Pack agregado');
+  } catch (err) { flash(err.message, 'err'); }
+}
+async function savePack(eventId, packId) {
+  try {
+    await api(`/events/${eventId}/packs/${packId}`, { method: 'PUT', auth: true, body: {
+      lotId: $('pLot_' + packId).value, quantity: Number($('pQty_' + packId).value), discountPercent: Number($('pPct_' + packId).value),
+    }});
+    await viewEdit(eventId);
+    flash('Pack actualizado');
+  } catch (err) { flash(err.message, 'err'); }
+}
+async function deletePackBtn(eventId, packId) {
+  if (!confirm('¿Borrar este pack? Las compras ya hechas no cambian.')) return;
+  try {
+    await api(`/events/${eventId}/packs/${packId}`, { method: 'DELETE', auth: true });
+    await viewEdit(eventId);
+    flash('Pack eliminado');
   } catch (err) { flash(err.message, 'err'); }
 }
 async function soldOutLot(eventId, lotId) {

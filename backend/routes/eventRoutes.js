@@ -8,6 +8,7 @@ const {
   deleteEvent,
 } = require("../controllers/eventController");
 const { addLot, updateLot, deleteLot } = require("../controllers/lotController");
+const { addPack, updatePack, deletePack } = require("../controllers/packController");
 const { protect, admin, optionalAdmin } = require("../middleware/authMiddleware");
 
 // Rutas públicas
@@ -23,5 +24,10 @@ router.delete("/:id", protect, admin, deleteEvent);
 router.post("/:eventId/lots", protect, admin, addLot);
 router.put("/:eventId/lots/:lotId", protect, admin, updateLot);
 router.delete("/:eventId/lots/:lotId", protect, admin, deleteLot);
+
+// Paquetes (promos por cantidad) del evento: también solo el administrador
+router.post("/:eventId/packs", protect, admin, addPack);
+router.put("/:eventId/packs/:packId", protect, admin, updatePack);
+router.delete("/:eventId/packs/:packId", protect, admin, deletePack);
 
 module.exports = router;

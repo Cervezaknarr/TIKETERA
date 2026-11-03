@@ -38,6 +38,16 @@ const PurchaseItem = sequelize.define("PurchaseItem", {
       min: 1,
     },
   },
+  // Si la línea viene de un paquete: entradas por paquete y descuento aplicado.
+  // unitPrice ya es el precio con el descuento. Null = entradas sueltas
+  packSize: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
+  discountPercent: {
+    type: DataTypes.DECIMAL(5, 2),
+    allowNull: true,
+  },
 });
 
 Purchase.hasMany(PurchaseItem, { foreignKey: "purchaseId", as: "items" });

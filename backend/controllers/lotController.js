@@ -2,6 +2,7 @@ const { Op } = require("sequelize");
 const Event = require("../models/Event");
 const Lot = require("../models/Lot");
 const Purchase = require("../models/Purchase");
+const Pack = require("../models/Pack");
 const { sequelize } = require("../config/database");
 const { parseLotInput } = require("../utils/lots");
 
@@ -166,6 +167,8 @@ const deleteLot = async (req, res) => {
       });
     }
 
+    // Los paquetes de este lote ya no tienen sentido
+    await Pack.destroy({ where: { lotId: lot.id } });
     await lot.destroy();
     res.json({ success: true, message: "Lote eliminado" });
   } catch (error) {
@@ -173,4 +176,4 @@ const deleteLot = async (req, res) => {
   }
 };
 
-module.exports = { addLot, updateLot, deleteLot };
+module.exports = { addLot, updateLot, deleteLot, findManagedEvent };

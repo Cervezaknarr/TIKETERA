@@ -200,3 +200,10 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 ### Edad mínima personalizable (2026-11-03)
 - Nueva columna `Event.minAge` (entero 1-99, null = sin etiqueta); el admin la carga en un campo numérico (sugeridas 16/18/21/23) y la API acepta `minAge`, o `adultsOnly` por compatibilidad (true = 18). Eventos viejos con `adultsOnly` se leen como +18 sin migrar datos.
 - **Al desplegar:** agrega la columna `Event.minAge`: NO tener `DB_SYNC_ALTER=false`.
+
+### Packs con descuento por evento (2026-11-03, sin commitear) [SEGURIDAD: toca precios]
+- Nuevo modelo `Pack` (evento, lote, cantidad, % de descuento): "Pack x5 al 5%", "Pack x10 al 10%", configurables por evento desde `/admin` > editar evento > Packs con descuento. Se compra de a packs enteros: 1 pack de 5 = 5 entradas con QR propio.
+- Checkout: `packs: [{packId,count}]` además de `items`. Precio por entrada = `round(precio*(100-%))/100`, guardado en `PurchaseItem.unitPrice` con `packSize` y `discountPercent`. Borrar un lote borra sus packs; borrar un pack no toca compras hechas.
+- Límites: los packs cuentan para `MAX_TICKETS_PER_PURCHASE` (10 por defecto): un pack de 10 ocupa toda la compra.
+- Tests: `backend/test/packs.test.js` (12). Con `PURCHASE_HOLD_MINUTES` definida en `.env` fallan 2 tests de `limits.test.js` (ya pasaba antes de esto); correr con `PURCHASE_HOLD_MINUTES= npm test`.
+- **Al desplegar:** agrega la tabla `Packs` y las columnas `PurchaseItem.packSize/discountPercent`: NO tener `DB_SYNC_ALTER=false`.

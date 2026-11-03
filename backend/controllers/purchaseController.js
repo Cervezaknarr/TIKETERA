@@ -2,9 +2,11 @@ const { Op } = require("sequelize");
 const Purchase = require("../models/Purchase");
 const Event = require("../models/Event");
 const Lot = require("../models/Lot");
+const Pack = require("../models/Pack");
 const Ticket = require("../models/Ticket");
 const PurchaseItem = require("../models/PurchaseItem");
 const { sequelize } = require("../config/database");
+const { packUnitPrice } = require("../utils/packs");
 const { itemsOf, pendingByLot, releaseStock, reserveItems } = require("../utils/purchases");
 const QRCode = require("qrcode");
 const { generateTicketCode } = require("../utils/ticketCode");
@@ -41,7 +43,10 @@ const itemsSummary = (items) => {
  *          La compra puede llevar varios lotes (un carrito) y se paga de una vez
  * @route   POST /api/purchases/checkout
  * @access  Public
- * @body    { eventId, buyerName, buyerEmail, items: [{ lotId, quantity }] }
+ * @body    { eventId, buyerName, buyerEmail, items: [{ lotId, quantity }],
+ *            packs: [{ packId, count }] }
+ *          items = entradas sueltas; packs = paquetes con descuento (count paquetes de
+ *          packId, cada uno con las entradas y el % de la promo). Se pueden combinar.
  *          El formato anterior { lotId, quantity } sigue funcionando
  */
 const createCheckoutSession = async (req, res) => {
@@ -55,16 +60,22 @@ const createCheckoutSession = async (req, res) => {
     }
 
     const { eventId, buyerEmail, buyerName } = req.body;
+    const requestedPacks = req.body.packs === undefined ? [] : req.body.packs;
     const requested = req.body.items === undefined
-      ? [{ lotId: req.body.lotId, quantity: req.body.quantity }]
+      ? requestedPacks.length ? [] : [{ lotId: req.body.lotId, quantity: req.body.quantity }]
       : req.body.items;
 
     // Verificar campos obligatorios
     const invalidItems =
       !Array.isArray(requested) ||
-      requested.length < 1 ||
+      !Array.isArray(requestedPacks) ||
+      requested.length + requestedPacks.length < 1 ||
       requested.length > 20 ||
-      requested.some((i) => !i || !Number.isInteger(i.quantity) || i.quantity < 1);
+      requestedPacks.length > 20 ||
+      requested.some((i) => !i || !Number.isInteger(i.quantity) || i.quantity < 1) ||
+      requestedPacks.some(
+        (p) => !p || typeof p.packId !== "string" || !Number.isInteger(p.count) || p.count < 1
+      );
     if (!eventId || !buyerEmail || !buyerName || invalidItems) {
       return res.status(400).json({
         success: false,
@@ -99,8 +110,8 @@ const createCheckoutSession = async (req, res) => {
     // dejar el evento "agotado" reservando todo sin pagar. El tope cuenta todas
     // las entradas del carrito
     const maxPerPurchase = Number(process.env.MAX_TICKETS_PER_PURCHASE) || 10;
-    const totalQuantity = requested.reduce((sum, i) => sum + i.quantity, 0);
-    if (totalQuantity > maxPerPurchase) {
+    // Tope barato antes de tocar la base: los paquetes se cuentan abajo, con su cantidad real
+    if (requested.reduce((sum, i) => sum + i.quantity, 0) > maxPerPurchase) {
       return res.status(400).json({
         success: false,
         message: `Podés comprar hasta ${maxPerPurchase} entradas por compra`,
@@ -122,8 +133,42 @@ const createCheckoutSession = async (req, res) => {
       }
       wanted.set(lot.id, { lot, quantity: (wanted.get(lot.id)?.quantity || 0) + quantity });
     }
+    // Paquetes: el servidor define cuántas entradas trae y qué descuento tiene cada uno;
+    // del cliente solo se toma qué paquete y cuántos. Cada paquete es una línea aparte
+    // (su precio es distinto al de las entradas sueltas del mismo lote)
+    const lines = [...wanted.values()].map(({ lot, quantity }) => ({ lot, quantity, pack: null }));
+    if (requestedPacks.length) {
+      const packs = await Pack.findAll({ where: { eventId } });
+      const counts = new Map();
+      for (const { packId, count } of requestedPacks) {
+        counts.set(packId, (counts.get(packId) || 0) + count);
+      }
+      for (const [packId, count] of counts) {
+        const pack = packs.find((p) => p.id === packId);
+        const lot = pack && lots.find((l) => l.id === pack.lotId);
+        if (!pack || !lot) {
+          return res.status(400).json({
+            success: false,
+            message: "El paquete ya no está disponible. Actualizá la página y elegí de nuevo",
+          });
+        }
+        lines.push({ lot, quantity: pack.quantity * count, pack });
+      }
+    }
+    const totalQuantity = lines.reduce((sum, l) => sum + l.quantity, 0);
+    if (totalQuantity > maxPerPurchase) {
+      return res.status(400).json({
+        success: false,
+        message: `Podés comprar hasta ${maxPerPurchase} entradas por compra`,
+      });
+    }
+    // Entradas por lote (sueltas + paquetes), para el cupo y los topes
+    const quantityByLot = new Map();
+    for (const { lot, quantity } of lines) {
+      quantityByLot.set(lot.id, (quantityByLot.get(lot.id) || 0) + quantity);
+    }
     // Siempre en el mismo orden: dos carritos simultáneos no se bloquean entre sí
-    const lines = [...wanted.values()].sort((a, b) => (a.lot.id < b.lot.id ? -1 : 1));
+    const lotsToLock = [...quantityByLot.keys()].sort();
 
     // Reservar el cupo y crear la compra en una sola transacción. El precio se
     // fija ahora: editar el lote después no cambia lo que se está pagando
@@ -131,8 +176,8 @@ const createCheckoutSession = async (req, res) => {
       // Bloquear los lotes: los topes se cuentan con las compras pendientes y dos
       // pedidos simultáneos no pueden pasar los dos
       const locked = new Map();
-      for (const { lot } of lines) {
-        locked.set(lot.id, await Lot.findByPk(lot.id, { transaction, lock: transaction.LOCK.UPDATE }));
+      for (const lotId of lotsToLock) {
+        locked.set(lotId, await Lot.findByPk(lotId, { transaction, lock: transaction.LOCK.UPDATE }));
       }
 
       const pendingForEmail = await Purchase.count({
@@ -152,25 +197,36 @@ const createCheckoutSession = async (req, res) => {
       // (nunca menos de lo que permite una compra), así un bot no lo agota
       const held = await pendingByLot(eventId, transaction);
       const percent = Number(process.env.MAX_PENDING_LOT_PERCENT) || 40;
-      for (const { lot, quantity } of lines) {
+      for (const lotId of lotsToLock) {
+        const lot = locked.get(lotId);
+        const quantity = quantityByLot.get(lotId);
         const pendingCap = Math.max(Math.floor((lot.quantity * percent) / 100), maxPerPurchase);
         // Si ya no queda cupo, el mensaje correcto es el de agotado, no este
         if (
-          locked.get(lot.id).ticketsAvailable >= quantity &&
+          lot.ticketsAvailable >= quantity &&
           (held.get(lot.id) || 0) + quantity > pendingCap
         ) {
           return { limit: "lot", lot };
         }
       }
 
-      const items = lines.map(({ lot, quantity }) => ({
-        lotId: lot.id,
-        lotName: lot.name,
-        unitPrice: Number(lot.price),
-        quantity,
-      }));
+      // El precio sale del lote bloqueado; en un paquete lleva el descuento de la promo
+      // (unitPrice ya descontado: es lo que se le cobra por entrada)
+      const items = lines.map(({ lot, quantity, pack }) => {
+        const current = locked.get(lot.id);
+        return {
+          lotId: lot.id,
+          lotName: current.name,
+          unitPrice: pack
+            ? packUnitPrice(current.price, pack.discountPercent)
+            : Number(current.price),
+          quantity,
+          packSize: pack ? pack.quantity : null,
+          discountPercent: pack ? Number(pack.discountPercent) : null,
+        };
+      });
       const failed = await reserveItems(items, transaction);
-      if (failed) return { soldOut: lines.find((l) => l.lot.id === failed.lotId).lot };
+      if (failed) return { soldOut: lots.find((l) => l.id === failed.lotId) };
 
       const totalPrice = items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
       const single = items.length === 1 ? items[0] : null;
@@ -244,7 +300,9 @@ const createCheckoutSession = async (req, res) => {
         id: purchase.id,
         eventId: purchase.eventId,
         lotName: purchase.lotName,
-        items: items.map(({ lotName, unitPrice, quantity }) => ({ lotName, unitPrice, quantity })),
+        items: items.map(({ lotName, unitPrice, quantity, packSize, discountPercent }) => ({
+          lotName, unitPrice, quantity, packSize, discountPercent,
+        })),
         buyerEmail: purchase.buyerEmail,
         quantity: purchase.quantity,
         totalPrice: purchase.totalPrice,
@@ -455,7 +513,11 @@ const getEventPurchases = async (req, res) => {
           model: Ticket,
           attributes: ["code", "status", "holderName", "usedAt", "lotName"],
         },
-        { model: PurchaseItem, as: "items", attributes: ["lotName", "unitPrice", "quantity"] },
+        {
+          model: PurchaseItem,
+          as: "items",
+          attributes: ["lotName", "unitPrice", "quantity", "packSize", "discountPercent"],
+        },
       ],
       order: [
         ["createdAt", "DESC"],
@@ -507,11 +569,15 @@ const getPurchaseTickets = async (req, res) => {
         buyerName: purchase.buyerName,
         buyerEmail: purchase.buyerEmail,
         lotName: purchase.lotName,
-        items: (await itemsOf(purchase)).map(({ lotName, unitPrice, quantity }) => ({
-          lotName,
-          unitPrice,
-          quantity,
-        })),
+        items: (await itemsOf(purchase)).map(
+          ({ lotName, unitPrice, quantity, packSize, discountPercent }) => ({
+            lotName,
+            unitPrice,
+            quantity,
+            packSize: packSize || null,
+            discountPercent: discountPercent == null ? null : Number(discountPercent),
+          })
+        ),
         quantity: purchase.quantity,
         totalPrice: purchase.totalPrice,
         status: purchase.status,

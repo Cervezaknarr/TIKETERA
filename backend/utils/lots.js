@@ -1,4 +1,5 @@
 const Lot = require("../models/Lot");
+const { packsByEvent } = require("./packs");
 
 /**
  * Validar los datos de un lote que manda el organizador.
@@ -53,12 +54,15 @@ const withLots = async (events) => {
     ],
   });
 
+  const packs = await packsByEvent(list.map((e) => e.id));
+
   const result = list.map((event) => {
     const json = event.toJSON();
     // El precio y el cupo viven en los lotes (las columnas del evento están en desuso)
     delete json.ticketPrice;
     delete json.ticketsAvailable;
     json.lots = lots.filter((lot) => lot.eventId === event.id);
+    json.packs = packs.get(event.id) || [];
     json.ticketsAvailable = json.lots.reduce((sum, lot) => sum + lot.ticketsAvailable, 0);
     return json;
   });

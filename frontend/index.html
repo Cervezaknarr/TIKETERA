@@ -90,12 +90,26 @@ const MAX_PER_PURCHASE = 10;   // el servidor aplica el mismo tope (MAX_TICKETS_
 const CHECKOUT_MINUTES = 10;   // tiempo para completar los datos en el resumen
 let currentEvent = null;
 let cart = {};                 // lotId -> cantidad
+let packCart = {};             // packId -> cantidad de paquetes
 let checkoutTimer = null;
 
 const cartLines = () => (currentEvent ? currentEvent.lots : [])
   .filter(l => cart[l.id] > 0).map(l => ({ lot: l, quantity: cart[l.id] }));
-const cartCount = () => cartLines().reduce((n, x) => n + x.quantity, 0);
-const cartTotal = () => cartLines().reduce((s, x) => s + x.lot.price * x.quantity, 0);
+// Precio de una entrada dentro de un paquete: misma fórmula que el servidor
+const packUnit = (lot, pack) => Math.round(Number(lot.price) * (100 - pack.discountPercent)) / 100;
+const pctText = n => String(Number(n)).replace('.', ',');
+// Paquetes del carrito: { pack, lot, count, quantity (entradas), unit, total }
+const packLines = () => (currentEvent ? currentEvent.packs || [] : [])
+  .filter(p => packCart[p.id] > 0).map(pack => {
+    const lot = currentEvent.lots.find(l => l.id === pack.lotId);
+    const quantity = pack.quantity * packCart[pack.id], unit = packUnit(lot, pack);
+    return { pack, lot, count: packCart[pack.id], quantity, unit, total: unit * quantity };
+  });
+const cartCount = () => cartLines().reduce((n, x) => n + x.quantity, 0) + packLines().reduce((n, x) => n + x.quantity, 0);
+const cartTotal = () => cartLines().reduce((s, x) => s + x.lot.price * x.quantity, 0) + packLines().reduce((s, x) => s + x.total, 0);
+// Entradas de un lote ya elegidas, sueltas o dentro de paquetes (comparten el mismo cupo)
+const lotInCart = lotId => (cart[lotId] || 0) + (currentEvent.packs || [])
+  .filter(p => p.lotId === lotId).reduce((n, p) => n + p.quantity * (packCart[p.id] || 0), 0);
 
 async function viewBuy(id) {
   clearInterval(checkoutTimer);
@@ -107,6 +121,12 @@ async function viewBuy(id) {
   const paused = await api('/purchases/status').then(r => r.salesPaused).catch(() => false);
   // Si el evento cambió mientras tanto, la selección se ajusta a lo que hay
   for (const l of e.lots) cart[l.id] = paused ? 0 : Math.min(cart[l.id] || 0, l.ticketsAvailable, MAX_PER_PURCHASE);
+  const packs = e.packs || [];
+  for (const p of packs) {
+    const lot = e.lots.find(l => l.id === p.lotId);
+    const fits = !paused && lot && lot.ticketsAvailable >= p.quantity * (packCart[p.id] || 0) + (cart[p.lotId] || 0);
+    if (!fits || p.quantity * (packCart[p.id] || 0) > MAX_PER_PURCHASE) packCart[p.id] = 0;
+  }
   document.title = e.title;
   const when = fmtWhen(e.date);
   const lotCard = l => {
@@ -125,6 +145,27 @@ async function viewBuy(id) {
           </span></span>`}
       </div>`;
   };
+  const packCard = p => {
+    const lot = e.lots.find(l => l.id === p.lotId);
+    if (!lot) return '';
+    const ok = !paused && p.quantity <= MAX_PER_PURCHASE && lot.ticketsAvailable >= p.quantity;
+    const unit = packUnit(lot, p), label = `Pack x${p.quantity} ${lot.name}`;
+    return `
+      <div class="ev-lot ev-pack ${ok ? '' : 'sold'} ${packCart[p.id] > 0 ? 'on' : ''}">
+        <span class="ev-lot-info">
+          <span class="ev-lot-name">${esc(label)} <span class="tag">−${pctText(p.discountPercent)}%</span></span>
+          <span class="ev-lot-price">${ok
+            ? `${money(unit * p.quantity)} <s>${money(lot.price * p.quantity)}</s> · ${money(unit)} c/u`
+            : '<span class="ev-soldtag">No disponible</span>'}</span>
+        </span>
+        ${ok ? `<span class="ev-lot-qty"><span>Packs</span>
+          <span class="ev-stepper" data-pack="${p.id}">
+            <button type="button" class="ev-step" aria-label="Quitar un ${esc(label)}" onclick="stepPack('${p.id}', -1)">−</button>
+            <output class="ev-qty" aria-live="polite">${packCart[p.id] || 0}</output>
+            <button type="button" class="ev-step" aria-label="Agregar un ${esc(label)}" onclick="stepPack('${p.id}', 1)">+</button>
+          </span></span>` : ''}
+      </div>`;
+  };
   const anyFree = e.lots.some(l => l.ticketsAvailable > 0);
   $('view').innerHTML = `
   <div class="ev-hero ${e.imageUrl ? '' : 'no-cover'}">${e.imageUrl ? `<img src="${esc(e.imageUrl)}" alt="Portada de ${esc(e.title)}">` : datePoster(e.date)}</div>
@@ -141,6 +182,8 @@ async function viewBuy(id) {
     <form class="ev-panel" onsubmit="goCheckout(event)">
       <h2>Entradas</h2>
       <div class="ev-lots">${e.lots.map(lotCard).join('')}</div>
+      ${packs.length ? `<h3 class="ev-subtitle">Packs con descuento</h3>
+      <div class="ev-lots">${packs.map(packCard).join('')}</div>` : ''}
       <p class="ev-note">${paused ? 'Las ventas están pausadas momentáneamente. Volvé a intentar en unos minutos.' : anyFree ? `Podés combinar tipos de entrada. Hasta ${MAX_PER_PURCHASE} por compra.` : 'Las entradas de este evento están agotadas.'}</p>
       <div class="ev-pay">
         <div class="ev-total"><small>Total</small><b id="bTotal"></b></div>
@@ -159,6 +202,7 @@ function stepQty(lotId, delta) {
   const before = cart[lotId] || 0;
   const next = before + delta;
   if (next < 0 || next > Math.min(lot.ticketsAvailable, MAX_PER_PURCHASE)) return;
+  if (delta > 0 && lotInCart(lotId) + delta > lot.ticketsAvailable) return flash(`Solo quedan ${lot.ticketsAvailable} entradas de ${lot.name}`, 'err');
   cart[lotId] = next;
   if (cartCount() > MAX_PER_PURCHASE) {
     cart[lotId] = before;
@@ -166,13 +210,39 @@ function stepQty(lotId, delta) {
   } else flash('');
   updTotal();
 }
+// Cambiar la cantidad de un pack (cada pack trae varias entradas)
+function stepPack(packId, delta) {
+  const pack = currentEvent.packs.find(p => p.id === packId);
+  const lot = currentEvent.lots.find(l => l.id === pack.lotId);
+  const before = packCart[packId] || 0;
+  const next = before + delta;
+  if (next < 0) return;
+  if (delta > 0) {
+    if (cartCount() + pack.quantity > MAX_PER_PURCHASE) return flash(`Podés comprar hasta ${MAX_PER_PURCHASE} entradas por compra`, 'err');
+    if (lotInCart(lot.id) + pack.quantity > lot.ticketsAvailable) return flash(`Solo quedan ${lot.ticketsAvailable} entradas de ${lot.name}`, 'err');
+  }
+  packCart[packId] = next;
+  flash('');
+  updTotal();
+}
 function updTotal() {
-  document.querySelectorAll('.ev-stepper').forEach(st => {
+  document.querySelectorAll('.ev-stepper[data-pack]').forEach(st => {
+    const pack = currentEvent.packs.find(p => p.id === st.dataset.pack);
+    const lot = currentEvent.lots.find(l => l.id === pack.lotId);
+    const q = packCart[pack.id] || 0;
+    const [minus, plus] = st.querySelectorAll('button');
+    st.querySelector('output').textContent = q;
+    minus.disabled = q <= 0;
+    plus.disabled = cartCount() + pack.quantity > MAX_PER_PURCHASE || lotInCart(lot.id) + pack.quantity > lot.ticketsAvailable;
+    st.closest('.ev-lot').classList.toggle('on', q > 0);
+  });
+  document.querySelectorAll('.ev-stepper[data-lot]').forEach(st => {
     const q = cart[st.dataset.lot] || 0;
     const [minus, plus] = st.querySelectorAll('button');
     st.querySelector('output').textContent = q;
     minus.disabled = q <= 0;
-    plus.disabled = q >= Number(st.dataset.max) || cartCount() >= MAX_PER_PURCHASE;
+    plus.disabled = q >= Number(st.dataset.max) || cartCount() >= MAX_PER_PURCHASE
+      || lotInCart(st.dataset.lot) >= currentEvent.lots.find(l => l.id === st.dataset.lot).ticketsAvailable;
     st.closest('.ev-lot').classList.toggle('on', q > 0);
   });
   const n = cartCount();
@@ -203,6 +273,14 @@ function viewCheckout() {
       </div>
       <b class="ev-row-sub">${money(lot.price * quantity)}</b>
       <button type="button" class="ev-x" aria-label="Quitar ${esc(lot.name)}" onclick="removeLine('${lot.id}')">✕</button>
+    </div>`).join('') + packLines().map(({ pack, lot, count, quantity, unit, total }) => `
+    <div class="ev-row">
+      <div class="ev-row-info">
+        <span class="ev-lot-name">${count > 1 ? count + ' × ' : ''}Pack x${pack.quantity} ${esc(lot.name)} <span class="tag">−${pctText(pack.discountPercent)}%</span></span>
+        <span class="ev-lot-price">${quantity} entradas × ${money(unit)} <s>${money(lot.price)}</s></span>
+      </div>
+      <b class="ev-row-sub">${money(total)}</b>
+      <button type="button" class="ev-x" aria-label="Quitar pack de ${esc(lot.name)}" onclick="removePack('${pack.id}')">✕</button>
     </div>`).join('');
   $('view').innerHTML = `
   <div class="ev-step">
@@ -255,6 +333,11 @@ function removeLine(lotId) {
   if (cartCount()) viewCheckout();
   else backToTickets();
 }
+function removePack(packId) {
+  packCart[packId] = 0;
+  if (cartCount()) viewCheckout();
+  else backToTickets();
+}
 function backToTickets() {
   clearInterval(checkoutTimer);
   if (location.hash === '#/resumen') history.back();
@@ -275,17 +358,18 @@ async function submitBuy(ev) {
       throw new Error('Los emails no coinciden');
     }
     const items = cartLines().map(({ lot, quantity }) => ({ lotId: lot.id, quantity }));
-    if (!items.length) throw new Error('Elegí al menos una entrada');
+    const packs = packLines().map(({ pack, count }) => ({ packId: pack.id, count }));
+    if (!items.length && !packs.length) throw new Error('Elegí al menos una entrada');
     $('bFinish').disabled = true;
     const { purchase, checkoutUrl } = await api('/purchases/checkout', { method: 'POST', body: {
-      eventId: currentEvent.id, items, buyerName: $('bName').value.trim(), buyerEmail: $('bEmail').value.trim(),
+      eventId: currentEvent.id, items, packs, buyerName: $('bName').value.trim(), buyerEmail: $('bEmail').value.trim(),
     }});
     clearInterval(checkoutTimer);
     // Pasarela real: se redirige a pagar y vuelve al link de las entradas
     if (checkoutUrl) { location.href = checkoutUrl; return; }
     // Sin checkoutUrl (modo de prueba): se simula la pasarela confirmando el cobro
     await api('/purchases/webhook', { method: 'POST', body: { paymentGatewayId: purchase.paymentGatewayId, status: 'approved' } });
-    cart = {};
+    cart = {}; packCart = {};
     go('tickets', purchase.accessToken);
     flash('¡Compra realizada! Estas son tus entradas.');
   } catch (err) {
@@ -296,7 +380,7 @@ async function submitBuy(ev) {
 
 // "2× General, 3× VIP" (las compras viejas solo traen el nombre del lote)
 const purchaseItems = p => p.items && p.items.length
-  ? ' · ' + p.items.map(i => `${i.quantity}× ${esc(i.lotName)}`).join(', ')
+  ? ' · ' + p.items.map(i => `${i.quantity}× ${esc(i.lotName)}${i.packSize ? ` (pack x${i.packSize} −${pctText(i.discountPercent)}%)` : ''}`).join(', ')
   : (p.lotName ? ' ' + esc(p.lotName) : '');
 
 // ---------- Mis entradas (link privado de la compra) ----------

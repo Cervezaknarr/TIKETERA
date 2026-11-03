@@ -48,6 +48,8 @@ body.ev {
 .ev-panel input:focus, .ev-panel select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent); }
 
 .ev-lots { display:grid; gap:10px; }
+.ev-subtitle { font-size:var(--fs-m); font-weight:700; margin:18px 0 8px; }
+.ev-lot-price s { opacity:.65; margin-left:4px; }
 .ev-lot { display:flex; align-items:center; gap:14px; padding:14px 16px; border-radius:16px; background:var(--field);
   border:2px solid var(--control-border); margin:0 !important; color:var(--text) !important; font-size:var(--fs-m) !important;
   transition:border-color .15s, background .15s; }
