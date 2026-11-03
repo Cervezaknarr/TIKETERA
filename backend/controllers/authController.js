@@ -7,12 +7,13 @@ const STAFF_ROLES = ["staff", "admin"];
 
 /**
  * Generar un token JWT
- * @param {string} id - ID del usuario
+ * @param {User} user
  * @returns {string} Token JWT
  */
-const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
-    expiresIn: "30d", // El token expira en 30 días
+const generateToken = (user) => {
+  return jwt.sign({ id: user.id, v: user.tokenVersion }, process.env.JWT_SECRET, {
+    // Alcanza para que el staff entre el día anterior y no le venza en la puerta
+    expiresIn: process.env.JWT_EXPIRES_IN || "3d",
   });
 };
 
@@ -55,7 +56,7 @@ const login = async (req, res) => {
           email: user.email,
           role: user.role,
         },
-        token: generateToken(user.id),
+        token: generateToken(user),
       });
     } else {
       res.status(401).json({

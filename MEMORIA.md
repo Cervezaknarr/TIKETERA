@@ -40,6 +40,13 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - `render.yaml` en la raíz: servicio web (`rootDir: backend`) + base Postgres, ambos en `plan: free`. `PAYMENT_PROVIDER` arranca en `mock`.
 - En local la web se abre en `http://localhost:5000` (backend), no con un servidor aparte.
 
+### Cabeceras de seguridad y sesiones (2026-11-03, rama `seguridad-cabeceras-sesion`, sin mergear) [SEGURIDAD]
+- `helmet` con CSP en `server.js`. Lleva `'unsafe-inline'` porque el frontend usa scripts y `onclick` en línea: limita a dónde se envían datos por `fetch`, formularios y marcos, pero no frena un XSS por sí sola. Las imágenes admiten cualquier `https:` porque la portada puede ser una URL externa. Sacar `'unsafe-inline'` exige pasar todo el JS en línea a archivos.
+- Sesión de 3 días (`JWT_EXPIRES_IN`), antes 30. Cambiar la contraseña sube `User.tokenVersion` y corta las sesiones abiertas.
+- Los tokens emitidos antes de este cambio siguen valiendo hasta su vencimiento (30 días) salvo que se cambie la contraseña; para cortarlos todos, rotar `JWT_SECRET`.
+- `npm audit fix` subió `body-parser`. Quedan sin arreglo `uuid` y `sequelize` (moderadas): el arreglo automático es incompatible.
+- **Al desplegar:** agrega la columna `User.tokenVersion`: NO tener `DB_SYNC_ALTER=false`.
+
 ## Decisiones tomadas
 - **Pasarela elegida: Mercado Pago.** Nave exige CUIT y el usuario no tiene. Nave queda implementado por si se consigue.
 - **Cobro del primer evento:** por ahora con la cuenta del usuario, solo para probar y dejar todo configurado. Después se usa la cuenta del organizador, o Marketplace de Mercado Pago si hay varios organizadores. Cambiar de cuenta es cambiar `MERCADOPAGO_ACCESS_TOKEN`.
