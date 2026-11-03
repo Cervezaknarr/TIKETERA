@@ -55,7 +55,7 @@ const Event = sequelize.define("Event", {
     type: DataTypes.TEXT,
     allowNull: true,
   },
-  // Solo mayores de 18: el comprador tiene que aceptarlo para poder comprar
+  // Solo mayores de 18: muestra la etiqueta en el evento, no cambia la compra
   adultsOnly: {
     type: DataTypes.BOOLEAN,
     allowNull: false,

@@ -87,7 +87,7 @@ app.use("/api/users", userRoutes);
 // Health check (lo usa el host para saber si el servidor está vivo)
 app.get("/health", (req, res) => {
   res.json({
-    message: "API de Ticketera funcionando correctamente",
+    message: "API de Kaiser Tikets funcionando correctamente",
     environment: process.env.NODE_ENV || "development",
     timestamp: new Date().toISOString(),
   });

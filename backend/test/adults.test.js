@@ -85,19 +85,10 @@ test("el evento se puede crear como +18 desde la API", async () => {
   assert.equal(res.body.event.adultsOnly, true);
 });
 
-test("un evento +18 exige aceptar la edad; los demás no", async () => {
+test("un evento +18 se compra igual que los demás, sin aceptar nada", async () => {
   const adults = await newEvent({ adultsOnly: true });
-  const items = [{ lotId: adults.general.id, quantity: 1 }];
-
-  for (const extra of [{}, { ageConfirmed: false }, { ageConfirmed: "true" }]) {
-    const res = await checkout(adults, items, extra);
-    assert.equal(res.status, 400);
-  }
-  assert.equal((await Lot.findByPk(adults.general.id)).ticketsAvailable, 50);
-  assert.equal((await checkout(adults, items, { ageConfirmed: true })).status, 201);
-
-  const regular = await newEvent();
-  assert.equal((await checkout(regular, [{ lotId: regular.general.id, quantity: 1 }])).status, 201);
+  const res = await checkout(adults, [{ lotId: adults.general.id, quantity: 1 }]);
+  assert.equal(res.status, 201);
 });
 
 test("el admin activa y desactiva +18; el público lo ve; un valor inválido se rechaza", async () => {

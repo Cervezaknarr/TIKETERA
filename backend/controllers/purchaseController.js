@@ -40,9 +40,8 @@ const itemsSummary = (items) => {
  *          La compra puede llevar varios lotes (un carrito) y se paga de una vez
  * @route   POST /api/purchases/checkout
  * @access  Public
- * @body    { eventId, buyerName, buyerEmail, ageConfirmed?, items: [{ lotId, quantity }] }
- *          `ageConfirmed` es para los eventos de mayores de 18. El formato anterior
- *          { lotId, quantity } sigue funcionando
+ * @body    { eventId, buyerName, buyerEmail, items: [{ lotId, quantity }] }
+ *          El formato anterior { lotId, quantity } sigue funcionando
  */
 const createCheckoutSession = async (req, res) => {
   try {
@@ -84,13 +83,6 @@ const createCheckoutSession = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Este evento no está a la venta",
-      });
-    }
-
-    if (event.adultsOnly && req.body.ageConfirmed !== true) {
-      return res.status(400).json({
-        success: false,
-        message: "Este evento es solo para mayores de 18: tenés que aceptarlo para comprar",
       });
     }
 

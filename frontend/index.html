@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ticketera</title>
+<title>Kaiser Tikets</title>
 <link rel="stylesheet" href="/styles.css">
 <link rel="stylesheet" href="/event.css">
 </head>
 <body>
 <header>
-  <h1>🎟️ Ticketera</h1>
+  <h1>🎟️ Kaiser Tikets</h1>
   <nav id="nav"><button class="ghost" onclick="go('events')">Eventos</button></nav>
 </header>
 <main>
@@ -91,9 +91,6 @@ const CHECKOUT_MINUTES = 10;   // tiempo para completar los datos en el resumen
 let currentEvent = null;
 let cart = {};                 // lotId -> cantidad
 let checkoutTimer = null;
-let ageAccepted = false;       // marcó la casilla de términos (evento +18)
-// Texto de la casilla de términos y condiciones de los eventos +18
-const ADULTS_TERMS = 'Acepto los términos y condiciones: declaro que todos los asistentes de esta compra son mayores de 18 años, que pueden pedirles un documento al ingresar, y que cada entrada (QR) es para una persona y vale para un solo ingreso.';
 
 const cartLines = () => (currentEvent ? currentEvent.lots : [])
   .filter(l => cart[l.id] > 0).map(l => ({ lot: l, quantity: cart[l.id] }));
@@ -216,11 +213,6 @@ function viewCheckout() {
       <label for="bEmail">Email</label><input id="bEmail" type="email" required autocomplete="email">
       <label for="bEmail2">Repetir email</label><input id="bEmail2" type="email" required autocomplete="off">
       <p class="ev-note">Verificá que tu email sea correcto: ahí recibís las entradas. Al continuar te llevamos a la pasarela de pago. En modo de prueba el pago se aprueba automáticamente.</p>
-      ${e.adultsOnly ? `
-      <label class="ev-terms">
-        <input id="bTerms" type="checkbox" required ${ageAccepted ? 'checked' : ''} onchange="ageAccepted = this.checked">
-        <span>${esc(ADULTS_TERMS)}</span>
-      </label>` : ''}
       <div class="ev-pay">
         <div class="ev-total"><small>Total</small><b>${money(cartTotal())}</b></div>
         <button class="ev-btn" id="bFinish">Finalizar compra</button>
@@ -276,7 +268,7 @@ async function submitBuy(ev) {
     if (!items.length) throw new Error('Elegí al menos una entrada');
     $('bFinish').disabled = true;
     const { purchase, checkoutUrl } = await api('/purchases/checkout', { method: 'POST', body: {
-      eventId: currentEvent.id, items, ageConfirmed: ageAccepted, buyerName: $('bName').value.trim(), buyerEmail: $('bEmail').value.trim(),
+      eventId: currentEvent.id, items, buyerName: $('bName').value.trim(), buyerEmail: $('bEmail').value.trim(),
     }});
     clearInterval(checkoutTimer);
     // Pasarela real: se redirige a pagar y vuelve al link de las entradas

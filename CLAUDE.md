@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Plataforma de venta de entradas con QR (el usuario y la documentación están en español). `MEMORIA.md` es el registro vivo del proyecto: estado, decisiones, pendientes e historial. Leelo antes de trabajar y actualizalo cuando cambie algo relevante.
+Plataforma de venta de entradas con QR, **Kaiser Tikets** (el usuario y la documentación están en español). `MEMORIA.md` es el registro vivo del proyecto: estado, decisiones, pendientes e historial. Leelo antes de trabajar y actualizalo cuando cambie algo relevante.
 
 ## Comandos
 
@@ -28,7 +28,7 @@ La web se abre en `http://localhost:5000`: el backend sirve el frontend. Para co
 **Modelo de datos** (Sequelize, `backend/models/`): `Event` → `Lot` (tipo de entrada con precio y cupo) → `Purchase` → `Ticket` (una entrada por persona, con código corto), más `Scan` y `User`.
 - El precio y el cupo viven en el `Lot`, no en el evento (`Event.ticketPrice/ticketsAvailable` están en desuso; `utils/migrateLots.js` migra eventos viejos al arrancar).
 - Una compra puede llevar **varios lotes** (carrito: `items: [{ lotId, quantity }]` en el checkout). Cada línea es un `PurchaseItem` con `lotName` y `unitPrice` tal como estaban al comprar, y cada `Ticket` guarda su lote. Con un solo lote, `Purchase.lotId/lotName/unitPrice` también se completan (formato anterior); las compras viejas no tienen líneas y `itemsOf()` usa el lote de la propia compra.
-- Un `Event` con `adultsOnly` exige `ageConfirmed: true` en el checkout; el resumen de la compra muestra una casilla obligatoria de términos (`ADULTS_TERMS` en `frontend/index.html`).
+- `Event.adultsOnly` solo muestra la etiqueta +18 en el evento: no cambia la compra.
 - El evento se identifica por `id` o por `slug` (único, generado del título en un hook de `Event` con `utils/slug.js`); `GET /api/events/:id` acepta ambos. La portada (`imageUrl`) es una data URL que el admin reduce en el navegador.
 
 **Compra y pago** (`controllers/purchaseController.js`, `utils/purchases.js`, `utils/paymentWindow.js`): el checkout reserva cupo en una transacción (`reserveStock`) y crea la compra `pending`; la pasarela avisa por webhook y recién ahí se emiten los `Ticket`. Un barrido cada 5 minutos libera el cupo de compras vencidas. Reglas que no son obvias:

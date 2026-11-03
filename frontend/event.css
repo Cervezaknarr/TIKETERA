@@ -77,10 +77,6 @@ body.ev {
 .ev-btn:active:not(:disabled) { transform:scale(.97); }
 .ev-note { color:var(--muted); font-size:var(--fs-xs); margin:14px 0 0; text-align:center; }
 
-/* Casilla de términos y condiciones de los eventos +18 */
-.ev-panel label.ev-terms { display:flex; align-items:flex-start; gap:12px; margin:16px 0 0; color:var(--text); font-size:var(--fs-s); font-weight:400; cursor:pointer; }
-.ev-panel .ev-terms input { flex:0 0 auto; width:22px; height:22px; margin:1px 0 0; padding:0; accent-color:var(--accent); -webkit-appearance:auto; appearance:auto; }
-
 /* Mis entradas bajo /e/<slug>: mismos tamaños que el resto */
 .ev .muted, .ev .msg { font-size:var(--fs-s); }
 .ev .tag { font-size:var(--fs-xs); }

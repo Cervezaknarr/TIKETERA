@@ -41,8 +41,8 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - En local la web se abre en `http://localhost:5000` (backend), no con un servidor aparte.
 
 ### Eventos +18 (2026-11-03, rama `lotes-y-seguridad`, sin mergear)
-- `Event.adultsOnly`: el aviso se ve junto a la descripción y el resumen de la compra tiene una casilla obligatoria de términos y condiciones (`ADULTS_TERMS` en `frontend/index.html`, texto a revisar por el usuario). El checkout rechaza la compra sin `ageConfirmed: true`.
-- Es una declaración del comprador: no se verifica la edad y, por decisión del usuario, la aceptación no se guarda en la compra.
+- `Event.adultsOnly` solo muestra la etiqueta +18 en el evento y el listado. Por decisión del usuario no hay casilla, ni aceptación, ni validación en la compra.
+- La web pasó a llamarse **Kaiser Tikets** (así lo escribió el usuario). Sin cambiar: nombres internos (`ticketera_session_*` en `localStorage`, servicio y base de Render, paquete) y `RESEND_FROM`, que se configura en Render.
 - **Lotes con código / cupones: se sacaron de esta rama por pedido del usuario**, que los va a implementar mejor en otra. La versión anterior quedó en `lotes-codigo-mayores18`.
 - **Al desplegar:** agrega `Event.adultsOnly`: NO tener `DB_SYNC_ALTER=false`.
 
