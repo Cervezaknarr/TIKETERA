@@ -11,7 +11,7 @@ const isSalesPaused = async () => (await Setting.findByPk(SALES_PAUSED))?.value 
 const setSalesPaused = (paused) =>
   Setting.upsert({ key: SALES_PAUSED, value: paused ? "true" : "false" });
 
-const getActiveAccount = () => PaymentAccount.findOne({ where: { active: true } });
+const getActiveAccount = () => PaymentAccount.findOne({ where: { active: true, eventId: null } });
 
 // Access token en claro de una cuenta, o null si no existe
 const tokenOfAccount = async (id) => {

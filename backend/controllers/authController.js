@@ -3,7 +3,7 @@ const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
 // Roles que pueden iniciar sesión
-const STAFF_ROLES = ["staff", "admin"];
+const STAFF_ROLES = ["staff", "organizer", "admin"];
 
 /**
  * Generar un token JWT
@@ -55,6 +55,7 @@ const login = async (req, res) => {
           name: user.name,
           email: user.email,
           role: user.role,
+          eventId: user.eventId || null,
         },
         token: generateToken(user),
       });

@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
+const Event = require("../models/Event");
 require("dotenv").config();
 
 // Los tokens anteriores a tokenVersion no traen `v`: valen como versión 0
@@ -84,11 +85,12 @@ const admin = (req, res, next) => {
 };
 
 /**
- * Middleware que verifica si el usuario es staff de control de acceso o administrador
+ * Middleware que verifica si el usuario es staff de control de acceso, organizador o
+ * administrador (los tres pueden escanear; a qué eventos, lo decide scanAccess)
  * Debe usarse después del middleware protect
  */
 const staff = (req, res, next) => {
-  if (req.user && (req.user.role === "staff" || req.user.role === "admin")) {
+  if (req.user && ["staff", "organizer", "admin"].includes(req.user.role)) {
     next();
   } else {
     res.status(403).json({
@@ -96,6 +98,73 @@ const staff = (req, res, next) => {
       message: "No tienes permisos para realizar esta acción",
     });
   }
+};
+
+const forbidden = (res) =>
+  res.status(403).json({
+    success: false,
+    message: "No tienes permisos para realizar esta acción",
+  });
+
+/**
+ * ¿Puede este usuario escanear entradas del evento? El admin y el staff general sí;
+ * el organizador solo en sus eventos y el staff de un organizador, solo en el suyo
+ */
+const canScanEvent = (user, event) => {
+  if (user.role === "admin") return true;
+  if (user.role === "organizer") return event.organizerId === user.id;
+  if (user.role === "staff") return !user.eventId || user.eventId === event.id;
+  return false;
+};
+
+/**
+ * Middleware para rutas con :eventId donde se escanea (check-in): responde 404 si el
+ * evento no existe y 403 si el usuario no puede escanear ahí
+ * Debe usarse después de protect y staff
+ */
+const scanAccess = async (req, res, next) => {
+  try {
+    const event = await Event.findByPk(req.params.eventId);
+    if (!event) {
+      return res.status(404).json({ success: false, message: "Evento no encontrado" });
+    }
+    if (!canScanEvent(req.user, event)) return forbidden(res);
+    req.managedEvent = event;
+    next();
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Error al verificar el acceso al evento" });
+  }
+};
+
+/**
+ * Middleware para rutas con :eventId que administra el dueño del evento: el admin, o
+ * el organizador asignado a ESE evento. Deja el evento en req.managedEvent
+ * Debe usarse después de protect
+ */
+const eventManager = async (req, res, next) => {
+  try {
+    if (!req.user || !["admin", "organizer"].includes(req.user.role)) return forbidden(res);
+    const event = await Event.findByPk(req.params.eventId);
+    if (!event) {
+      return res.status(404).json({ success: false, message: "Evento no encontrado" });
+    }
+    if (req.user.role === "organizer" && event.organizerId !== req.user.id) return forbidden(res);
+    req.managedEvent = event;
+    next();
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Error al verificar el acceso al evento" });
+  }
+};
+
+/**
+ * Middleware que deja pasar solo a organizadores (y admins)
+ * Debe usarse después del middleware protect
+ */
+const organizer = (req, res, next) => {
+  if (req.user && ["organizer", "admin"].includes(req.user.role)) return next();
+  forbidden(res);
 };
 
 /**
@@ -117,4 +186,13 @@ const optionalAdmin = async (req, res, next) => {
   next();
 };
 
-module.exports = { protect, admin, staff, optionalAdmin };
+module.exports = {
+  protect,
+  admin,
+  staff,
+  organizer,
+  eventManager,
+  scanAccess,
+  canScanEvent,
+  optionalAdmin,
+};

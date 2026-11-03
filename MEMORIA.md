@@ -207,3 +207,11 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - Límites: los packs cuentan para `MAX_TICKETS_PER_PURCHASE` (10 por defecto): un pack de 10 ocupa toda la compra.
 - Tests: `backend/test/packs.test.js` (12). Con `PURCHASE_HOLD_MINUTES` definida en `.env` fallan 2 tests de `limits.test.js` (ya pasaba antes de esto); correr con `PURCHASE_HOLD_MINUTES= npm test`.
 - **Al desplegar:** agrega la tabla `Packs` y las columnas `PurchaseItem.packSize/discountPercent`: NO tener `DB_SYNC_ALTER=false`.
+
+### Rol organizador por evento (2026-11-03, sin commitear) [SEGURIDAD: permisos, cuentas de cobro y datos personales]
+- Nuevo rol `organizer`. El admin lo crea en /admin > Staff y lo asigna desde el formulario del evento (campo "Organizador"). Entra a `/organizador` y, solo en SUS eventos: ve compradores (nombre, email, entradas; con export CSV), crea y borra staff (queda acotado a ese evento con `User.eventId`), escanea QR y maneja pagos (agrega/activa/borra cuentas de Mercado Pago propias del evento, pausa y reanuda las ventas del evento).
+- Decisión: las cuentas del organizador son de cada evento y no se mezclan con las generales del admin (`PaymentAccount.eventId`). Un evento sin cuenta propia cobra con la cuenta activa de la plataforma. **La plata de un evento con cuenta propia va a la cuenta del organizador.**
+- Pausa de ventas por evento (`Event.salesPaused`, checkout responde 503) independiente de la pausa general. Cambiar la cuenta del evento exige pausarlo, como en el panel general.
+- Staff creado por el admin sigue siendo general (escanea cualquier evento). Borrar un organizador deja sus eventos sin organizador (su staff queda; lo borra el admin).
+- Tests: `backend/test/organizer.test.js` (10): aislamiento entre organizadores, staff, escáner, cuentas y checkout con la cuenta del evento. Corren 137 en total con `PURCHASE_HOLD_MINUTES=` vacío.
+- **Al desplegar:** agrega `User.eventId`, `Event.organizerId/salesPaused/paymentAccountId`, `PaymentAccount.eventId` y el valor `organizer` del enum de `User.role`: NO tener `DB_SYNC_ALTER=false`. El enum en Postgres no se probó en una base real (solo SQLite): probarlo en una base de prueba antes de producción.

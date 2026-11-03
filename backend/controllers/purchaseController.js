@@ -106,6 +106,14 @@ const createCheckoutSession = async (req, res) => {
       });
     }
 
+    // El organizador puede pausar las ventas de su evento (la pausa general es aparte)
+    if (event.salesPaused) {
+      return res.status(503).json({
+        success: false,
+        message: "Las ventas de este evento están pausadas momentáneamente. Probá de nuevo en unos minutos",
+      });
+    }
+
     // Topes contra el acaparamiento: sin ellos, una sola compra o un bot podría
     // dejar el evento "agotado" reservando todo sin pagar. El tope cuenta todas
     // las entradas del carrito
@@ -497,14 +505,7 @@ const getEventPurchases = async (req, res) => {
       });
     }
 
-    // Verificar si el usuario es el propietario del evento o admin
-    if (event.userId !== req.user.id && req.user.role !== "admin") {
-      return res.status(403).json({
-        success: false,
-        message: "No tienes permiso para ver las compras de este evento",
-      });
-    }
-
+    // El acceso (admin u organizador de este evento) lo verifica el middleware eventManager
     // Buscar las compras del evento, con sus entradas para ver quién ya ingresó
     const purchases = await Purchase.findAll({
       where: { eventId },

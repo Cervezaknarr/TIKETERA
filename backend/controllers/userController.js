@@ -1,5 +1,6 @@
 const { UniqueConstraintError, ValidationError } = require("sequelize");
 const User = require("../models/User");
+const Event = require("../models/Event");
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -11,28 +12,32 @@ const serializeUser = (user) => ({
   name: user.name,
   email: user.email,
   role: user.role,
+  eventId: user.eventId || null,
   createdAt: user.createdAt,
 });
 
+// Roles que el admin gestiona desde el panel: staff general u organizador de eventos
+const CREATABLE_ROLES = ["staff", "organizer"];
+
 /**
- * Buscar un usuario staff por id. Los admin no se modifican desde la API:
- * así un admin no puede borrar o cambiar la contraseña de otro
+ * Buscar un usuario staff u organizador por id. Los admin no se modifican desde la
+ * API: así un admin no puede borrar o cambiar la contraseña de otro
  * @returns {Promise<User|null>}
  */
-const findStaff = (id) => User.findOne({ where: { id, role: "staff" } });
+const findStaff = (id) => User.findOne({ where: { id, role: CREATABLE_ROLES } });
 
 const validatePassword = (password) =>
   typeof password === "string" && password.length >= MIN_PASSWORD_LENGTH;
 
 /**
- * @desc    Listar el personal (staff y admins)
+ * @desc    Listar el personal (staff, organizadores y admins)
  * @route   GET /api/users
  * @access  Admin
  */
 const getUsers = async (req, res) => {
   try {
     const users = await User.findAll({
-      where: { role: ["staff", "admin"] },
+      where: { role: ["staff", "organizer", "admin"] },
       order: [
         ["role", "ASC"],
         ["name", "ASC"],
@@ -50,14 +55,16 @@ const getUsers = async (req, res) => {
 };
 
 /**
- * @desc    Crear un usuario staff (control de acceso)
+ * @desc    Crear un usuario staff (control de acceso) u organizador de eventos
  * @route   POST /api/users
  * @access  Admin
- * @body    { name, email, password }
+ * @body    { name, email, password, role?: "organizer" }  (sin rol, o con otro, se crea staff)
  */
 const createStaffUser = async (req, res) => {
   try {
     const { name, email, password } = req.body;
+    // Solo "organizer" se respeta; cualquier otro valor (incluido "admin") crea un staff
+    const role = req.body.role === "organizer" ? "organizer" : "staff";
 
     if (!name || !email || !password) {
       return res.status(400).json({
@@ -77,7 +84,7 @@ const createStaffUser = async (req, res) => {
       name: String(name).trim(),
       email: String(email).trim().toLowerCase(),
       password,
-      role: "staff",
+      role,
     });
 
     res.status(201).json({ success: true, user: serializeUser(user) });
@@ -157,6 +164,11 @@ const deleteStaffUser = async (req, res) => {
         success: false,
         message: "Usuario staff no encontrado",
       });
+    }
+
+    // Un organizador borrado deja sus eventos sin organizador (los maneja el admin)
+    if (user.role === "organizer") {
+      await Event.update({ organizerId: null }, { where: { organizerId: user.id } });
     }
 
     // Los escaneos guardan staffUserId como dato de auditoría, sin clave

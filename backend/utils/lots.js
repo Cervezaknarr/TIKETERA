@@ -44,7 +44,7 @@ const parseLotInput = (input, { partial = false } = {}) => {
  * Traer los lotes de varios eventos y adjuntarlos, con el cupo total disponible.
  * Los lotes salen en el orden que definió el organizador
  */
-const withLots = async (events) => {
+const withLots = async (events, { admin = false } = {}) => {
   const list = Array.isArray(events) ? events : [events];
   const lots = await Lot.findAll({
     where: { eventId: list.map((e) => e.id) },
@@ -61,6 +61,9 @@ const withLots = async (events) => {
     // El precio y el cupo viven en los lotes (las columnas del evento están en desuso)
     delete json.ticketPrice;
     delete json.ticketsAvailable;
+    // Datos internos: la cuenta de cobro nunca sale; el organizador, solo para el admin
+    delete json.paymentAccountId;
+    if (!admin) delete json.organizerId;
     json.lots = lots.filter((lot) => lot.eventId === event.id);
     json.packs = packs.get(event.id) || [];
     json.ticketsAvailable = json.lots.reduce((sum, lot) => sum + lot.ticketsAvailable, 0);

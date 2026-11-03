@@ -263,7 +263,33 @@ const getCheckinStats = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Eventos publicados donde quien consulta puede escanear: todos para el admin y
+ *          el staff general; los suyos para el organizador; uno solo para el staff de
+ *          un organizador
+ * @route   GET /api/checkin/my-events
+ * @access  Staff/Organizador/Admin
+ */
+const getMyEvents = async (req, res) => {
+  try {
+    const where = { status: "published" };
+    if (req.user.role === "organizer") where.organizerId = req.user.id;
+    else if (req.user.role === "staff" && req.user.eventId) where.id = req.user.eventId;
+
+    const events = await Event.findAll({
+      where,
+      attributes: ["id", "title", "date", "slug"],
+      order: [["date", "ASC"]],
+    });
+    res.json({ success: true, events });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Error al obtener los eventos" });
+  }
+};
+
 module.exports = {
   syncCheckin,
   getCheckinStats,
+  getMyEvents,
 };

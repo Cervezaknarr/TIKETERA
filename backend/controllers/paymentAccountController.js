@@ -21,7 +21,7 @@ const present = (account) => ({
  */
 const getPaymentAccounts = async (req, res) => {
   try {
-    const accounts = await PaymentAccount.findAll({ order: [["createdAt", "ASC"]] });
+    const accounts = await PaymentAccount.findAll({ where: { eventId: null }, order: [["createdAt", "ASC"]] });
     res.json({
       success: true,
       accounts: accounts.map(present),
@@ -41,7 +41,7 @@ const getPaymentAccounts = async (req, res) => {
 /**
  * @desc    Agregar una cuenta (queda inactiva hasta que se active)
  * @route   POST /api/payment-accounts
- * @access  Admin
+ * @access  Admin (o el organizador del evento, desde /api/organizer)
  * @body    { name, accessToken }
  */
 const createPaymentAccount = async (req, res) => {
@@ -79,10 +79,13 @@ const createPaymentAccount = async (req, res) => {
       throw error;
     }
 
+    // Desde el panel del organizador (eventManager) la cuenta queda como propia de ese
+    // evento; desde el panel general del admin, como cuenta de la plataforma
     const account = await PaymentAccount.create({
       name,
       accessToken: encrypt(accessToken),
       tokenHint: accessToken.slice(-4),
+      eventId: req.managedEvent ? req.managedEvent.id : null,
     });
     res.status(201).json({ success: true, account: present(account) });
   } catch (error) {
@@ -107,9 +110,10 @@ const activatePaymentAccount = async (req, res) => {
     }
 
     const result = await sequelize.transaction(async (transaction) => {
-      const account = await PaymentAccount.findByPk(req.params.id, { transaction });
+      // Solo cuentas generales: las que cargan los organizadores son de cada evento
+      const account = await PaymentAccount.findOne({ where: { id: req.params.id, eventId: null }, transaction });
       if (!account) return null;
-      await PaymentAccount.update({ active: false }, { where: {}, transaction });
+      await PaymentAccount.update({ active: false }, { where: { eventId: null }, transaction });
       account.active = true;
       await account.save({ transaction });
       return account;
@@ -132,7 +136,7 @@ const activatePaymentAccount = async (req, res) => {
  */
 const deletePaymentAccount = async (req, res) => {
   try {
-    const account = await PaymentAccount.findByPk(req.params.id);
+    const account = await PaymentAccount.findOne({ where: { id: req.params.id, eventId: null } });
     if (!account) {
       return res.status(404).json({ success: false, message: "Cuenta no encontrada" });
     }
@@ -174,6 +178,7 @@ const updateSalesPaused = async (req, res) => {
 };
 
 module.exports = {
+  present,
   getPaymentAccounts,
   createPaymentAccount,
   activatePaymentAccount,

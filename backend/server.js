@@ -18,6 +18,7 @@ const purchaseRoutes = require("./routes/purchaseRoutes");
 const checkinRoutes = require("./routes/checkinRoutes");
 const userRoutes = require("./routes/userRoutes");
 const paymentAccountRoutes = require("./routes/paymentAccountRoutes");
+const organizerRoutes = require("./routes/organizerRoutes");
 
 // Inicializar Express
 const app = express();
@@ -85,6 +86,7 @@ app.use("/api/purchases", purchaseRoutes);
 app.use("/api/checkin", checkinRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/payment-accounts", paymentAccountRoutes);
+app.use("/api/organizer", organizerRoutes);
 
 // Health check (lo usa el host para saber si el servidor está vivo)
 app.get("/health", (req, res) => {

@@ -29,7 +29,7 @@ function renderNav() {
        <button class="ghost" onclick="go('events')">Eventos</button>
        <button class="ghost" onclick="go('edit')">Crear evento</button>
        <button class="ghost" onclick="go('payments')">Pagos</button>
-       <button class="ghost" onclick="go('users')">Staff</button>
+       <button class="ghost" onclick="go('users')">Staff y organizadores</button>
        <a href="/staff/" class="ghost-link">Escáner</a>
        <button onclick="logout()">Salir</button>`
     : '';
@@ -87,6 +87,10 @@ async function viewEdit(id) {
     try { ({ event: e } = await api('/events/' + id, { auth: true })); } catch (err) { return flash(err.message, 'err'); }
   }
 
+  // Organizadores disponibles (usuarios con rol organizador), para asignarlo al evento
+  let organizers = [];
+  try { ({ users: organizers } = await api('/users', { auth: true })); organizers = organizers.filter(u => u.role === 'organizer'); } catch { /* sin lista: el selector queda vacío */ }
+
   coverData = undefined; // sin tocar: el evento conserva su portada
   const eventFields = `
       <label>Portada</label>
@@ -107,6 +111,12 @@ async function viewEdit(id) {
       <input id="eMinAge" type="number" min="1" max="99" step="1" list="eAgeOpts" placeholder="Sin restricción" value="${ageOf(e) || ''}">
       <datalist id="eAgeOpts"><option value="16"><option value="18"><option value="21"><option value="23"></datalist>
       <p class="muted" style="margin:4px 0 12px">Muestra la etiqueta «+edad» en el evento. No cambia la compra. Vacío = sin etiqueta.</p>
+      <label>Organizador (opcional)</label>
+      <select id="eOrganizer">
+        <option value="">Sin organizador (lo manejo yo)</option>
+        ${organizers.map(u => `<option value="${u.id}" ${e.organizerId === u.id ? 'selected' : ''}>${esc(u.name)} · ${esc(u.email)}</option>`).join('')}
+      </select>
+      <p class="muted" style="margin:4px 0 12px">El organizador entra a <b>${esc(location.origin)}/organizador</b>: ve los compradores de este evento, crea su staff, escanea entradas y maneja sus cobros (cuenta de Mercado Pago y pausa de ventas). ${organizers.length ? '' : 'Todavía no hay organizadores: creá uno en <b>Staff</b>.'}</p>
       <label>Estado</label>
       <select id="eStatus">
         ${Object.entries(eventStatus).map(([v, t]) => `<option value="${v}" ${e.status === v ? 'selected' : ''}>${t}</option>`).join('')}
@@ -273,7 +283,7 @@ async function submitEvent(ev, id) {
   const body = {
     title: $('eTitle').value, description: $('eDesc').value,
     date: new Date($('eDate').value).toISOString(), location: $('eLoc').value,
-    status: $('eStatus').value, minAge: $('eMinAge').value === '' ? null : Number($('eMinAge').value),
+    status: $('eStatus').value, organizerId: $('eOrganizer').value || null, minAge: $('eMinAge').value === '' ? null : Number($('eMinAge').value),
   };
   if (coverData !== undefined) body.imageUrl = coverData;
   // Al crear van los lotes. Al editar solo los datos del evento: los lotes (precio y
@@ -541,13 +551,16 @@ async function viewUsers() {
   $('view').innerHTML = `
   <h2>Personal</h2>
   <div class="card" style="margin-bottom:14px">
-    <h3>Agregar usuario staff</h3>
-    <p class="muted">El staff solo puede entrar a <b>${esc(location.origin)}/staff</b> y escanear entradas.</p>
+    <h3>Agregar usuario</h3>
+    <p class="muted"><b>Staff</b>: entra a <b>${esc(location.origin)}/staff</b> y escanea entradas de cualquier evento.<br>
+      <b>Organizador</b>: entra a <b>${esc(location.origin)}/organizador</b> y maneja solo los eventos que le asignes al crearlos o editarlos.</p>
     <form onsubmit="submitUser(event)">
       <div class="row">
         <div><label>Nombre</label><input id="uName" required placeholder="Puerta 1"></div>
         <div><label>Email</label><input id="uEmail" type="email" required></div>
       </div>
+      <label>Rol</label>
+      <select id="uRole"><option value="staff">Staff</option><option value="organizer">Organizador</option></select>
       <label>Contraseña (mínimo 8 caracteres)</label>
       <input id="uPass" type="text" required minlength="8" autocomplete="new-password">
       <p><button>Agregar</button></p>
@@ -560,8 +573,8 @@ async function viewUsers() {
         <tr>
           <td><b>${esc(u.name)}</b></td>
           <td class="muted">${esc(u.email)}</td>
-          <td><span class="tag">${u.role === 'admin' ? 'Admin' : 'Staff'}</span></td>
-          <td style="white-space:nowrap">${u.role === 'staff' ? `
+          <td><span class="tag">${{ admin: 'Admin', organizer: 'Organizador' }[u.role] || (u.eventId ? 'Staff de evento' : 'Staff')}</span></td>
+          <td style="white-space:nowrap">${u.role !== 'admin' ? `
             <button class="ghost" onclick="resetPassword('${u.id}', this.dataset.name)" data-name="${esc(u.name)}">Cambiar contraseña</button>
             <button class="ghost danger" onclick="deleteUser('${u.id}', this.dataset.name)" data-name="${esc(u.name)}">Borrar</button>` : ''}</td>
         </tr>`).join('')}
@@ -573,9 +586,9 @@ async function viewUsers() {
 async function submitUser(ev) {
   ev.preventDefault();
   try {
-    await api('/users', { method: 'POST', auth: true, body: { name: $('uName').value, email: $('uEmail').value, password: $('uPass').value } });
+    await api('/users', { method: 'POST', auth: true, body: { name: $('uName').value, email: $('uEmail').value, password: $('uPass').value, role: $('uRole').value } });
     await viewUsers();
-    flash('Usuario staff agregado. Pasale el email y la contraseña por un medio privado.');
+    flash('Usuario agregado. Pasale el email y la contraseña por un medio privado.');
   } catch (err) { flash(err.message, 'err'); }
 }
 

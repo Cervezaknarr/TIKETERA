@@ -92,7 +92,9 @@ module.exports = {
    *   accountId: la cuenta con la que se creó el pago (se guarda en la compra)
    */
   async createPayment({ purchase, event, items }) {
-    const config = await getConfig();
+    // Si el evento tiene cuenta propia (la cargó su organizador) se cobra con ella; si no,
+    // con la cuenta activa de la plataforma
+    const config = await getConfig(event.paymentAccountId || undefined);
     const frontend = process.env.FRONTEND_URL || "http://localhost:5500";
     const returnUrl = `${frontend}/#/entradas/${purchase.accessToken}`;
 

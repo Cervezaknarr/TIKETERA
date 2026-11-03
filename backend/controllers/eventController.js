@@ -36,6 +36,21 @@ const parseAgeFields = ({ minAge, adultsOnly }) => {
   return { minAge: undefined };
 };
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Organizador del evento: undefined = no tocar; null o "" = quitarlo; si no, tiene
+// que ser el id de un usuario con rol "organizer"
+const parseOrganizer = async (value) => {
+  if (value === undefined) return {};
+  if (value === null || value === "") return { organizerId: null };
+  if (typeof value !== "string" || !UUID_RE.test(value)) {
+    return { error: "El organizador es inválido" };
+  }
+  const user = await User.findOne({ where: { id: value, role: "organizer" } });
+  if (!user) return { error: "El organizador no existe" };
+  return { organizerId: user.id };
+};
+
 const serverError = (res, error, message) => {
   console.error(error);
   res.status(500).json({
@@ -78,6 +93,8 @@ const createEvent = async (req, res) => {
     }
     const age = parseAgeFields(req.body);
     if (age.error) return res.status(400).json({ success: false, message: age.error });
+    const organizer = await parseOrganizer(req.body.organizerId);
+    if (organizer.error) return res.status(400).json({ success: false, message: organizer.error });
 
     // Lotes: la lista nueva, o el precio y cupo únicos del formato anterior
     let lotsInput = req.body.lots;
@@ -115,6 +132,7 @@ const createEvent = async (req, res) => {
           imageUrl: imageUrl || null,
           adultsOnly: age.minAge != null,
           minAge: age.minAge ?? null,
+          organizerId: organizer.organizerId ?? null,
           status,
           userId: req.user.id, // El userId viene del middleware de autenticación
         },
@@ -134,7 +152,7 @@ const createEvent = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      event: await withLots(event),
+      event: await withLots(event, { admin: true }),
     });
   } catch (error) {
     serverError(res, error, "Error al crear el evento");
@@ -166,7 +184,7 @@ const getEventById = async (req, res) => {
     if (event && (event.status === "published" || req.isAdmin)) {
       res.json({
         success: true,
-        event: await withLots(event),
+        event: await withLots(event, { admin: req.isAdmin }),
       });
     } else {
       res.status(404).json({
@@ -226,7 +244,7 @@ const getEvents = async (req, res) => {
 
     res.json({
       success: true,
-      events: await withLots(rows),
+      events: await withLots(rows, { admin: req.isAdmin }),
       pagination: {
         totalItems: count,
         totalPages: Math.ceil(count / limit),
@@ -286,6 +304,8 @@ const updateEvent = async (req, res) => {
     }
     const age = parseAgeFields(req.body);
     if (age.error) return res.status(400).json({ success: false, message: age.error });
+    const organizer = await parseOrganizer(req.body.organizerId);
+    if (organizer.error) return res.status(400).json({ success: false, message: organizer.error });
 
     // Solo actualizar los campos proporcionados
     if (title !== undefined) event.title = title.trim();
@@ -294,6 +314,7 @@ const updateEvent = async (req, res) => {
     if (location !== undefined) event.location = location.trim();
     if (imageUrl !== undefined) event.imageUrl = imageUrl || null;
     if (status !== undefined) event.status = status;
+    if (organizer.organizerId !== undefined) event.organizerId = organizer.organizerId;
     if (age.minAge !== undefined) {
       event.minAge = age.minAge;
       event.adultsOnly = age.minAge != null;
@@ -303,7 +324,7 @@ const updateEvent = async (req, res) => {
 
     res.json({
       success: true,
-      event: await withLots(event),
+      event: await withLots(event, { admin: true }),
     });
   } catch (error) {
     serverError(res, error, "Error al actualizar el evento");

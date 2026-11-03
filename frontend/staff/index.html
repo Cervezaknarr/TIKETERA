@@ -34,7 +34,7 @@ function logout() { stopScanner(); auth.set(null, null); start(); }
 function start() {
   renderNav();
   if (!session.token) {
-    return renderLogin('Ingreso del personal', ['staff', 'admin'], (token, user) => { auth.set(token, user); flash(''); start(); });
+    return renderLogin('Ingreso del personal', ['staff', 'organizer', 'admin'], (token, user) => { auth.set(token, user); flash(''); start(); });
   }
   viewScanner();
 }
@@ -51,7 +51,9 @@ const uuid = () => crypto.randomUUID ? crypto.randomUUID()
 
 async function viewScanner() {
   let events = [];
-  try { ({ events } = await api('/events?limit=100&status=published')); } catch (err) { return flash(err.message, 'err'); }
+  // Solo los eventos donde esta cuenta puede escanear (staff de un organizador: uno solo)
+  try { ({ events } = await api('/checkin/my-events', { auth: true })); } catch (err) { return flash(err.message, 'err'); }
+  if (!events.length) { $('view').innerHTML = '<p class="muted">No hay eventos publicados donde puedas escanear.</p>'; return; }
   const lastEvent = localStorage.getItem('validateEvent');
   $('view').innerHTML = `
   <div class="card" style="max-width:480px;margin:auto">

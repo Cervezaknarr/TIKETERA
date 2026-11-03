@@ -27,8 +27,14 @@ const User = sequelize.define(
       allowNull: false,
     },
     role: {
-      type: DataTypes.ENUM("user", "staff", "admin"),
+      type: DataTypes.ENUM("user", "staff", "organizer", "admin"),
       defaultValue: "user",
+    },
+    // Solo para staff creado por un organizador: único evento donde puede escanear.
+    // null = staff general (escanea cualquier evento). Sin clave foránea a propósito
+    eventId: {
+      type: DataTypes.UUID,
+      allowNull: true,
     },
     // Va dentro del token de sesión: al subirla, los tokens anteriores dejan de valer
     tokenVersion: {

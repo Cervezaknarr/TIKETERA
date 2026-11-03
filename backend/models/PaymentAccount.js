@@ -24,10 +24,17 @@ const PaymentAccount = sequelize.define("PaymentAccount", {
     type: DataTypes.STRING(8),
     allowNull: false,
   },
+  // Cuenta general de la plataforma: la activa es la que cobra los eventos sin
+  // cuenta propia. En las cuentas de un evento no se usa (ver Event.paymentAccountId)
   active: {
     type: DataTypes.BOOLEAN,
     allowNull: false,
     defaultValue: false,
+  },
+  // Evento dueño de la cuenta (la cargó su organizador). null = cuenta general
+  eventId: {
+    type: DataTypes.UUID,
+    allowNull: true,
   },
 });
 

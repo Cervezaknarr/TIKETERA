@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Kaiser Tikets · Organizador</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>🎟️ Kaiser Tikets <span class="muted">· Organizador</span></h1>
+  <nav id="nav"></nav>
+</header>
+<main>
+  <div id="msg"></div>
+  <div id="view"></div>
+</main>
+
+<script src="/common.js"></script>
+<script>
+// Panel del organizador: compradores, staff, escáner y cobros de SUS eventos.
+// El servidor verifica en cada pedido que el evento sea suyo; esta página solo lo muestra
+const auth = createSession('organizer');
+onUnauthorized = () => { logout(); flash('La sesión venció. Volvé a ingresar.', 'err'); };
+
+// El escáner (/staff) tiene su propia sesión: se comparte la del organizador para no
+// pedirle la contraseña dos veces. Es la misma cuenta y el servidor limita sus eventos
+const STAFF_KEY = 'ticketera_session_staff';
+function shareWithScanner(token, user) {
+  try {
+    if (token) localStorage.setItem(STAFF_KEY, JSON.stringify({ token, user }));
+    else localStorage.removeItem(STAFF_KEY);
+  } catch { /* sin almacenamiento: tendrá que ingresar en el escáner */ }
+}
+
+function renderNav() {
+  $('nav').innerHTML = session.user
+    ? `<span class="muted">${esc(session.user.name)}</span>
+       <button class="ghost" onclick="go('events')">Mis eventos</button>
+       <a href="/staff/" class="ghost-link">Escáner</a>
+       <button onclick="logout()">Salir</button>`
+    : '';
+}
+
+function logout() { auth.set(null, null); shareWithScanner(null); renderNav(); go('events'); }
+
+function go(view, arg) {
+  flash('');
+  renderNav();
+  if (!session.token) {
+    return renderLogin('Ingreso de organizadores', ['organizer'], (token, user) => {
+      auth.set(token, user); shareWithScanner(token, user); go('events');
+    });
+  }
+  ({ events: viewEvents, buyers: viewBuyers, staff: viewStaff, payments: viewPayments }[view])(arg);
+}
+
+let myEvents = [];
+const eventById = (id) => myEvents.find(e => e.id === id);
+const when = (d) => new Date(d).toLocaleString('es-AR', { dateStyle: 'medium', timeStyle: 'short' });
+const backBtn = `<p><button class="ghost" onclick="go('events')">Volver a mis eventos</button></p>`;
+
+// ---------- Mis eventos ----------
+async function viewEvents() {
+  $('view').innerHTML = '<p class="muted">Cargando…</p>';
+  try { ({ events: myEvents } = await api('/organizer/events', { auth: true })); }
+  catch (err) { $('view').innerHTML = ''; return flash(err.message, 'err'); }
+  if (!myEvents.length) {
+    $('view').innerHTML = '<h2>Mis eventos</h2><p class="muted">Todavía no tenés eventos asignados. Pedile al administrador que te asigne uno.</p>';
+    return;
+  }
+  const stats = await Promise.all(myEvents.map(e =>
+    api(`/checkin/events/${e.id}/stats`, { auth: true }).then(r => r.stats).catch(() => null)));
+  $('view').innerHTML = `<h2>Mis eventos</h2>` + myEvents.map((e, i) => `
+    <div class="card" style="margin-bottom:12px">
+      <h3>${esc(e.title)}
+        ${e.status !== 'published' ? '<span class="tag">No publicado</span>' : ''}
+        ${e.salesPaused ? '<span class="tag failed">Ventas pausadas</span>' : ''}</h3>
+      <p class="muted">📅 ${esc(when(e.date))} · 📍 ${esc(e.location)}<br>
+        Disponibles: <b>${e.ticketsAvailable}</b>${stats[i] ? ` · Ingresaron: <b>${stats[i].admitted} / ${stats[i].total}</b>` : ''}</p>
+      <button onclick="go('buyers','${e.id}')">Compradores</button>
+      <button class="ghost" onclick="go('staff','${e.id}')">Staff</button>
+      <button class="ghost" onclick="go('payments','${e.id}')">Pagos</button>
+      ${e.status === 'published' ? `<a class="ghost-link" href="/e/${esc(e.slug)}" target="_blank" rel="noopener">Ver página</a>` : ''}
+    </div>`).join('');
+}
+
+// ---------- Compradores ----------
+const purchaseStatus = { completed: 'Pagada', pending: 'Pendiente', failed: 'Rechazada', refunded: 'Reembolsada' };
+let buyers = { event: null, purchases: [] };
+
+async function viewBuyers(eventId) {
+  $('view').innerHTML = '<p class="muted">Cargando…</p>';
+  try {
+    const { purchases } = await api('/purchases/event/' + eventId, { auth: true });
+    buyers = { event: eventById(eventId), purchases };
+  } catch (err) { $('view').innerHTML = ''; return flash(err.message, 'err'); }
+
+  const paid = buyers.purchases.filter(p => p.status === 'completed');
+  const tickets = paid.flatMap(p => p.Tickets);
+  const stat = (label, value) => `<div class="card stat"><div class="muted">${label}</div><div class="statv">${value}</div></div>`;
+  $('view').innerHTML = `
+  <h2>${esc(buyers.event.title)}</h2>
+  <p class="muted">📅 ${esc(when(buyers.event.date))} · 📍 ${esc(buyers.event.location)}</p>
+  <div class="stats">
+    ${stat('Entradas vendidas', tickets.length)}
+    ${stat('Recaudado', money(paid.reduce((s, p) => s + Number(p.totalPrice), 0)))}
+    ${stat('Ingresaron', `${tickets.filter(t => t.status === 'used').length} / ${tickets.length}`)}
+    ${stat('Disponibles', buyers.event.ticketsAvailable)}
+  </div>
+  <div class="card">
+    <div class="toolbar">
+      <input id="bSearch" placeholder="Buscar por nombre, email o código" oninput="renderBuyers()">
+      <select id="bFilter" onchange="renderBuyers()">
+        <option value="completed">Pagadas</option>
+        <option value="all">Todas</option>
+        <option value="pending">Pendientes</option>
+        <option value="failed">Rechazadas</option>
+      </select>
+      <button class="ghost" onclick="exportBuyersCsv()">Exportar CSV</button>
+    </div>
+    <div id="bList"></div>
+  </div>
+  ${backBtn}`;
+  renderBuyers();
+}
+
+function renderBuyers() {
+  const q = $('bSearch').value.trim().toLowerCase();
+  const filter = $('bFilter').value;
+  const list = buyers.purchases.filter(p =>
+    (filter === 'all' || p.status === filter) &&
+    (!q || [p.buyerName, p.buyerEmail, p.lotName || '', ...p.Tickets.map(t => t.code)].some(v => v.toLowerCase().includes(q)))
+  );
+  const time = (d) => new Date(d).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  $('bList').innerHTML = list.length ? `
+  <div class="table-wrap"><table>
+    <thead><tr><th>Comprador</th><th>Entradas</th><th>Total</th><th>Estado</th><th>Fecha</th></tr></thead>
+    <tbody>${list.map(p => `
+      <tr>
+        <td><b>${esc(p.buyerName)}</b><br><span class="muted">${esc(p.buyerEmail)}</span></td>
+        <td>${p.quantity}${p.lotName ? ` · <b>${esc(p.lotName)}</b>` : ''}${p.Tickets.length ? `<br>${p.Tickets.map(t => `<span class="tag ${t.status}" title="${t.status === 'used' ? 'Ingresó a las ' + time(t.usedAt) : ''}">${esc(t.code)}${t.status === 'used' ? ' ✓' : ''}</span>`).join(' ')}` : ''}</td>
+        <td>${money(p.totalPrice)}</td>
+        <td><span class="tag ${p.status}">${purchaseStatus[p.status]}</span></td>
+        <td class="muted">${new Date(p.createdAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table></div>
+  <p class="muted">${list.length} compra(s)</p>`
+  : '<p class="muted">No hay compras que coincidan.</p>';
+}
+
+// Una fila por entrada: sirve de lista de respaldo en papel para la puerta
+function exportBuyersCsv() {
+  // Una celda que empieza con = + - @ la tomaría Excel como fórmula: se antepone ' para que sea texto
+  const cell = (v) => {
+    const s = String(v ?? '');
+    return `"${(/^[=+\-@\t\r]/.test(s) ? "'" + s : s).replace(/"/g, '""')}"`;
+  };
+  const rows = [['Codigo', 'Lote', 'Estado entrada', 'Ingreso', 'Comprador', 'Email', 'Estado compra', 'Fecha compra']];
+  for (const p of buyers.purchases) {
+    for (const t of p.Tickets) {
+      rows.push([t.code, t.lotName || p.lotName || '', t.status === 'used' ? 'Ingresó' : t.status === 'void' ? 'Anulada' : 'Válida',
+        t.usedAt ? new Date(t.usedAt).toLocaleString('es-AR') : '', p.buyerName, p.buyerEmail,
+        purchaseStatus[p.status], new Date(p.createdAt).toLocaleString('es-AR')]);
+    }
+  }
+  const csv = '﻿' + rows.map(r => r.map(cell).join(';')).join('\r\n'); // BOM + ; para que Excel lo abra bien
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `compradores-${buyers.event.title.replace(/[^\w-]+/g, '_')}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ---------- Staff del evento ----------
+async function viewStaff(eventId) {
+  $('view').innerHTML = '<p class="muted">Cargando…</p>';
+  let users;
+  try { ({ users } = await api(`/organizer/events/${eventId}/staff`, { auth: true })); }
+  catch (err) { $('view').innerHTML = ''; return flash(err.message, 'err'); }
+  const event = eventById(eventId);
+  $('view').innerHTML = `
+  <h2>Staff · ${esc(event.title)}</h2>
+  <div class="card" style="margin-bottom:14px">
+    <h3>Agregar staff</h3>
+    <p class="muted">Entra a <b>${esc(location.origin)}/staff</b> con su email y contraseña y solo puede escanear las entradas de <b>este evento</b>.</p>
+    <form onsubmit="submitStaff(event, '${eventId}')">
+      <div class="row">
+        <div><label>Nombre</label><input id="uName" required placeholder="Puerta 1"></div>
+        <div><label>Email</label><input id="uEmail" type="email" required></div>
+      </div>
+      <label>Contraseña (mínimo 8 caracteres)</label>
+      <input id="uPass" type="text" required minlength="8" autocomplete="new-password">
+      <p><button>Agregar</button></p>
+    </form>
+  </div>
+  <div class="card table-wrap">
+    ${users.length ? `<table>
+      <thead><tr><th>Nombre</th><th>Email</th><th></th></tr></thead>
+      <tbody>${users.map(u => `
+        <tr>
+          <td><b>${esc(u.name)}</b></td>
+          <td class="muted">${esc(u.email)}</td>
+          <td style="white-space:nowrap">
+            <button class="ghost" onclick="resetStaffPassword('${eventId}', '${u.id}', this.dataset.name)" data-name="${esc(u.name)}">Cambiar contraseña</button>
+            <button class="ghost danger" onclick="deleteStaff('${eventId}', '${u.id}', this.dataset.name)" data-name="${esc(u.name)}">Borrar</button>
+          </td>
+        </tr>`).join('')}
+      </tbody></table>` : '<p class="muted">Todavía no creaste staff para este evento.</p>'}
+  </div>
+  ${backBtn}`;
+}
+
+async function submitStaff(ev, eventId) {
+  ev.preventDefault();
+  try {
+    await api(`/organizer/events/${eventId}/staff`, { method: 'POST', auth: true, body: { name: $('uName').value, email: $('uEmail').value, password: $('uPass').value } });
+    await viewStaff(eventId);
+    flash('Staff agregado. Pasale el email y la contraseña por un medio privado.');
+  } catch (err) { flash(err.message, 'err'); }
+}
+async function resetStaffPassword(eventId, id, name) {
+  const password = prompt(`Nueva contraseña para ${name} (mínimo 8 caracteres):`);
+  if (!password) return;
+  try {
+    await api(`/organizer/events/${eventId}/staff/${id}`, { method: 'PUT', auth: true, body: { password } });
+    flash('Contraseña cambiada. Se cerró su sesión abierta.');
+  } catch (err) { flash(err.message, 'err'); }
+}
+async function deleteStaff(eventId, id, name) {
+  if (!confirm(`¿Borrar a ${name}? Deja de poder ingresar en el acto.`)) return;
+  try {
+    await api(`/organizer/events/${eventId}/staff/${id}`, { method: 'DELETE', auth: true });
+    await viewStaff(eventId);
+    flash('Staff eliminado');
+  } catch (err) { flash(err.message, 'err'); }
+}
+
+// ---------- Pagos del evento: cuenta de Mercado Pago y pausa de ventas ----------
+async function viewPayments(eventId) {
+  $('view').innerHTML = '<p class="muted">Cargando…</p>';
+  let d;
+  try { d = await api(`/organizer/events/${eventId}/payments`, { auth: true }); }
+  catch (err) { $('view').innerHTML = ''; return flash(err.message, 'err'); }
+  const active = d.accounts.find(a => a.active);
+  const charging = d.provider !== 'mercadopago' ? `la pasarela <b>${esc(d.provider)}</b>`
+    : active ? `<b>${esc(active.name)}</b> (…${esc(active.tokenHint)})`
+    : 'la <b>cuenta general de la plataforma</b> (todavía no activaste una cuenta propia)';
+
+  $('view').innerHTML = `
+  <h2>Pagos · ${esc(d.event.title)}</h2>
+  <div class="card" style="margin-bottom:14px">
+    <h3>Ventas ${d.salesPaused ? '<span class="tag failed">Pausadas</span>' : '<span class="tag completed">Abiertas</span>'}</h3>
+    <p class="muted">Este evento cobra con ${charging}.<br>
+      Compras sin terminar de pagar: <b>${d.pendingPurchases}</b>. Las que ya están en curso se siguen confirmando con la cuenta con la que se crearon.</p>
+    <p><button class="${d.salesPaused ? '' : 'danger'}" onclick="setSalesPaused('${eventId}', ${!d.salesPaused})">${d.salesPaused ? 'Reanudar ventas' : 'Pausar ventas'}</button></p>
+    <p class="muted">Para cambiar de cuenta: pausá las ventas, activá la otra cuenta y reanudá. Mientras estén pausadas nadie puede iniciar una compra nueva de este evento.</p>
+  </div>
+
+  <div class="card table-wrap" style="margin-bottom:14px">
+    <h3>Mis cuentas de Mercado Pago</h3>
+    ${d.provider !== 'mercadopago' ? `<p class="muted">La pasarela configurada es <b>${esc(d.provider)}</b>: las cuentas solo se usan con Mercado Pago.</p>` : ''}
+    ${d.accounts.length ? `<table>
+      <thead><tr><th>Cuenta</th><th>Token</th><th>Estado</th><th></th></tr></thead>
+      <tbody>${d.accounts.map(a => `
+        <tr>
+          <td><b>${esc(a.name)}</b></td>
+          <td class="muted">…${esc(a.tokenHint)}</td>
+          <td>${a.active ? '<span class="tag completed">Activa</span>' : '<span class="tag">Inactiva</span>'}</td>
+          <td style="white-space:nowrap">
+            ${a.active ? '' : `<button class="ghost" ${d.salesPaused ? '' : 'disabled title="Pausá las ventas para cambiar de cuenta"'} onclick="activateAccount('${eventId}', '${a.id}', this.dataset.name)" data-name="${esc(a.name)}">Activar</button>
+            <button class="ghost danger" onclick="deleteAccount('${eventId}', '${a.id}', this.dataset.name)" data-name="${esc(a.name)}">Borrar</button>`}
+          </td>
+        </tr>`).join('')}
+      </tbody></table>` : '<p class="muted">Todavía no cargaste ninguna cuenta.</p>'}
+  </div>
+
+  <div class="card">
+    <h3>Agregar una cuenta</h3>
+    ${d.keyConfigured ? '' : '<p class="muted"><b>El servidor no tiene configurado el cifrado de cuentas</b>: avisale al administrador. Hasta entonces no se pueden guardar cuentas.</p>'}
+    <p class="muted">Usá el <b>Access Token de producción</b> de la aplicación de Mercado Pago de esa cuenta. Se verifica con Mercado Pago, se guarda cifrado y no se vuelve a mostrar. La plata de las ventas de este evento va a esa cuenta.</p>
+    <form onsubmit="submitAccount(event, '${eventId}')">
+      <label>Nombre (para reconocerla)</label><input id="aName" required maxlength="60" placeholder="Mi cuenta">
+      <label>Access Token de producción</label><input id="aToken" type="password" required autocomplete="off">
+      <p><button ${d.keyConfigured ? '' : 'disabled'}>Agregar cuenta</button></p>
+    </form>
+  </div>
+  ${backBtn}`;
+}
+
+async function submitAccount(ev, eventId) {
+  ev.preventDefault();
+  try {
+    await api(`/organizer/events/${eventId}/payments/accounts`, { method: 'POST', auth: true, body: { name: $('aName').value, accessToken: $('aToken').value } });
+    await viewPayments(eventId);
+    flash('Cuenta agregada. Todavía no cobra: activala cuando quieras usarla.');
+  } catch (err) { flash(err.message, 'err'); }
+}
+async function setSalesPaused(eventId, paused) {
+  if (paused && !confirm('¿Pausar las ventas de este evento? Nadie va a poder iniciar compras hasta que las reanudes.')) return;
+  try {
+    await api(`/organizer/events/${eventId}/sales-paused`, { method: 'PUT', auth: true, body: { paused } });
+    await viewPayments(eventId);
+    flash(paused ? 'Ventas pausadas' : 'Ventas reanudadas');
+  } catch (err) { flash(err.message, 'err'); }
+}
+async function activateAccount(eventId, id, name) {
+  if (!confirm(`¿Cobrar este evento con ${name} desde ahora? Las compras en curso se siguen confirmando con la cuenta anterior.`)) return;
+  try {
+    await api(`/organizer/events/${eventId}/payments/accounts/${id}/activate`, { method: 'POST', auth: true });
+    await viewPayments(eventId);
+    flash(`Ahora este evento cobra con ${name}. Acordate de reanudar las ventas.`);
+  } catch (err) { flash(err.message, 'err'); }
+}
+async function deleteAccount(eventId, id, name) {
+  if (!confirm(`¿Borrar la cuenta ${name}?`)) return;
+  try {
+    await api(`/organizer/events/${eventId}/payments/accounts/${id}`, { method: 'DELETE', auth: true });
+    await viewPayments(eventId);
+    flash('Cuenta borrada');
+  } catch (err) { flash(err.message, 'err'); }
+}
+
+go('events');
+</script>
+</body>
+</html>

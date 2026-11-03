@@ -55,6 +55,24 @@ const Event = sequelize.define("Event", {
     type: DataTypes.TEXT,
     allowNull: true,
   },
+  // Organizador del evento (usuario con rol "organizer"): ve sus compradores, crea
+  // su staff y maneja sus cobros. null = lo maneja solo el administrador
+  organizerId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+  },
+  // Pausa de ventas de este evento (la pausa general de la plataforma es aparte)
+  salesPaused: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
+  // Cuenta de Mercado Pago con la que cobra este evento (una cuenta propia del
+  // evento, ver PaymentAccount.eventId). null = la cuenta general de la plataforma
+  paymentAccountId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+  },
   // Solo mayores de 18: muestra la etiqueta en el evento, no cambia la compra
   adultsOnly: {
     type: DataTypes.BOOLEAN,

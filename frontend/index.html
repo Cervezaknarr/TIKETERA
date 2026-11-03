@@ -118,7 +118,7 @@ async function viewBuy(id) {
   } catch (err) { return flash(err.message, 'err'); }
   const e = currentEvent;
   // El admin puede pausar las ventas (por ejemplo al cambiar la cuenta de cobro)
-  const paused = await api('/purchases/status').then(r => r.salesPaused).catch(() => false);
+  const paused = e.salesPaused || await api('/purchases/status').then(r => r.salesPaused).catch(() => false);
   // Si el evento cambió mientras tanto, la selección se ajusta a lo que hay
   for (const l of e.lots) cart[l.id] = paused ? 0 : Math.min(cart[l.id] || 0, l.ticketsAvailable, MAX_PER_PURCHASE);
   const packs = e.packs || [];
