@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ticketera</title>
+<title>Kaiser Tikets</title>
 <link rel="stylesheet" href="/styles.css">
 <link rel="stylesheet" href="/event.css">
 </head>
 <body>
 <header>
-  <h1>🎟️ Ticketera</h1>
+  <h1>🎟️ Kaiser Tikets</h1>
   <nav id="nav"><button class="ghost" onclick="go('events')">Eventos</button></nav>
 </header>
 <main>
@@ -46,7 +46,7 @@ async function viewEvents() {
     $('view').innerHTML = `<h2>Próximos eventos</h2>` + (events.length
       ? `<div class="grid">${events.map(e => `
         <div class="card">
-          <h3>${esc(e.title)}</h3>
+          <h3>${esc(e.title)}${e.adultsOnly ? ' <span class="tag">+18</span>' : ''}</h3>
           <div class="muted">📅 ${esc(fmtWhen(e.date))}<br>📍 ${esc(e.location)}</div>
           <p>${esc(e.description)}</p>
           <div class="lots">${e.lots.map(l => `
@@ -130,6 +130,7 @@ async function viewBuy(id) {
       <div class="ev-meta">
         <span class="ev-chip">📅 ${esc(when)}</span>
         <span class="ev-chip">📍 ${esc(e.location)}</span>
+        ${e.adultsOnly ? '<span class="ev-chip">🔞 Solo mayores de 18</span>' : ''}
       </div>
       <p class="ev-desc">${esc(e.description)}</p>
       ${mapBlock(e)}
@@ -146,6 +147,7 @@ async function viewBuy(id) {
   </div>`;
   updTotal();
 }
+
 
 // Cambiar la cantidad de un tipo de entrada, respetando el máximo por compra
 function setQty(lotId, select) {

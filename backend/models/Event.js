@@ -55,6 +55,12 @@ const Event = sequelize.define("Event", {
     type: DataTypes.TEXT,
     allowNull: true,
   },
+  // Solo mayores de 18: muestra la etiqueta en el evento, no cambia la compra
+  adultsOnly: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
   status: {
     type: DataTypes.ENUM("draft", "published", "cancelled"),
     defaultValue: "published",

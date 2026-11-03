@@ -30,7 +30,7 @@ const serverError = (res, error, message) => {
  * @desc    Crear un nuevo evento con sus lotes (tipos de entrada)
  * @route   POST /api/events
  * @access  Private
- * @body    { title, description, date, location, imageUrl?,
+ * @body    { title, description, date, location, imageUrl?, adultsOnly?,
  *            lots: [{ name, price, quantity }] }
  *          Sin `lots`, `ticketPrice` + `ticketsAvailable` crean un lote "General"
  */
@@ -56,6 +56,10 @@ const createEvent = async (req, res) => {
 
     if (imageUrl && !isValidImage(imageUrl)) {
       return res.status(400).json({ success: false, message: INVALID_IMAGE });
+    }
+    const { adultsOnly } = req.body;
+    if (adultsOnly !== undefined && typeof adultsOnly !== "boolean") {
+      return res.status(400).json({ success: false, message: "El campo de mayores de 18 es inválido" });
     }
 
     // Lotes: la lista nueva, o el precio y cupo únicos del formato anterior
@@ -92,6 +96,7 @@ const createEvent = async (req, res) => {
           date,
           location,
           imageUrl: imageUrl || null,
+          adultsOnly: adultsOnly === true,
           status,
           userId: req.user.id, // El userId viene del middleware de autenticación
         },
@@ -241,7 +246,7 @@ const updateEvent = async (req, res) => {
       });
     }
 
-    const { title, description, date, location, imageUrl, status } = req.body;
+    const { title, description, date, location, imageUrl, status, adultsOnly } = req.body;
 
     // Los textos obligatorios no pueden quedar vacíos
     for (const [field, value] of Object.entries({ title, description, location })) {
@@ -261,6 +266,9 @@ const updateEvent = async (req, res) => {
     if (status !== undefined && !EVENT_STATUSES.includes(status)) {
       return res.status(400).json({ success: false, message: "Estado del evento inválido" });
     }
+    if (adultsOnly !== undefined && typeof adultsOnly !== "boolean") {
+      return res.status(400).json({ success: false, message: "El campo de mayores de 18 es inválido" });
+    }
 
     // Solo actualizar los campos proporcionados
     if (title !== undefined) event.title = title.trim();
@@ -269,6 +277,7 @@ const updateEvent = async (req, res) => {
     if (location !== undefined) event.location = location.trim();
     if (imageUrl !== undefined) event.imageUrl = imageUrl || null;
     if (status !== undefined) event.status = status;
+    if (adultsOnly !== undefined) event.adultsOnly = adultsOnly;
 
     await event.save();
 

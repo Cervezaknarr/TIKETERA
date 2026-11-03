@@ -1,6 +1,7 @@
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 require('dotenv').config();
 const { sequelize, testConnection } = require('./config/database');
 const { startExpirationSweep } = require('./utils/purchases');
@@ -27,6 +28,33 @@ const app = express();
 const trustProxy = process.env.TRUST_PROXY;
 if (trustProxy !== undefined) app.set("trust proxy", Number(trustProxy));
 else if (process.env.NODE_ENV === "production") app.set("trust proxy", 1);
+
+// Cabeceras de seguridad. El frontend usa scripts y onclick en línea, por eso
+// necesita 'unsafe-inline'; igual se limita a dónde puede conectarse o enviar datos
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrcAttr: ["'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        // La portada puede ser una URL externa; blob: es la vista previa al subirla
+        imgSrc: ["'self'", "data:", "blob:", "https:"],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        frameSrc: ["https://www.google.com"], // Mapa de la página del evento
+        frameAncestors: ["'none'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+      },
+    },
+    // Sin subdominios: el aviso no debe alcanzar a un dominio propio futuro
+    strictTransportSecurity: { includeSubDomains: false },
+  })
+);
 
 // El frontend se sirve desde este mismo servidor, así que en producción no hace
 // falta CORS. Se habilita solo si CORS_ORIGIN lista orígenes (separados por coma)
@@ -59,7 +87,7 @@ app.use("/api/users", userRoutes);
 // Health check (lo usa el host para saber si el servidor está vivo)
 app.get("/health", (req, res) => {
   res.json({
-    message: "API de Ticketera funcionando correctamente",
+    message: "API de Kaiser Tikets funcionando correctamente",
     environment: process.env.NODE_ENV || "development",
     timestamp: new Date().toISOString(),
   });

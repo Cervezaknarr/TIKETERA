@@ -30,6 +30,12 @@ const User = sequelize.define(
       type: DataTypes.ENUM("user", "staff", "admin"),
       defaultValue: "user",
     },
+    // Va dentro del token de sesión: al subirla, los tokens anteriores dejan de valer
+    tokenVersion: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+    },
   },
   {
     hooks: {
@@ -45,6 +51,7 @@ const User = sequelize.define(
         if (user.changed("password")) {
           const salt = await bcrypt.genSalt(10);
           user.password = await bcrypt.hash(user.password, salt);
+          user.tokenVersion += 1; // Cambiar la contraseña corta las sesiones abiertas
         }
       },
     },

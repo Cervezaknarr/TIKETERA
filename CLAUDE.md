@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Plataforma de venta de entradas con QR (el usuario y la documentación están en español). `MEMORIA.md` es el registro vivo del proyecto: estado, decisiones, pendientes e historial. Leelo antes de trabajar y actualizalo cuando cambie algo relevante.
+Plataforma de venta de entradas con QR, **Kaiser Tikets** (el usuario y la documentación están en español). `MEMORIA.md` es el registro vivo del proyecto: estado, decisiones, pendientes e historial. Leelo antes de trabajar y actualizalo cuando cambie algo relevante.
 
 ## Comandos
 
@@ -16,7 +16,7 @@ node --test test/lots.test.js            # un archivo
 node --test --test-name-pattern="slug" test/slug.test.js   # un test por nombre
 ```
 
-La web se abre en `http://localhost:5000`: el backend sirve el frontend. Para correr sin Postgres, `DATABASE_URL=sqlite::memory:` (con `sqlite3`); ojo que `sequelize.sync({ alter: true })` falla en SQLite con datos ya cargados, así que usar una base nueva cada vez. `PAYMENT_PROVIDER=mock` simula la pasarela (bloqueado con `NODE_ENV=production`).
+La web se abre en `http://localhost:5000`: el backend sirve el frontend. Para correr sin Postgres, `DATABASE_URL=sqlite::memory:` (con `sqlite3`); ojo que `sequelize.sync({ alter: true })` falla en SQLite con datos ya cargados, así que usar una base nueva cada vez. Para Postgres local sin SSL, `DB_SSL=false` (se ignora con `NODE_ENV=production`). `PAYMENT_PROVIDER=mock` simula la pasarela (bloqueado con `NODE_ENV=production`).
 
 ## Arquitectura
 
@@ -28,11 +28,13 @@ La web se abre en `http://localhost:5000`: el backend sirve el frontend. Para co
 **Modelo de datos** (Sequelize, `backend/models/`): `Event` → `Lot` (tipo de entrada con precio y cupo) → `Purchase` → `Ticket` (una entrada por persona, con código corto), más `Scan` y `User`.
 - El precio y el cupo viven en el `Lot`, no en el evento (`Event.ticketPrice/ticketsAvailable` están en desuso; `utils/migrateLots.js` migra eventos viejos al arrancar).
 - Una compra puede llevar **varios lotes** (carrito: `items: [{ lotId, quantity }]` en el checkout). Cada línea es un `PurchaseItem` con `lotName` y `unitPrice` tal como estaban al comprar, y cada `Ticket` guarda su lote. Con un solo lote, `Purchase.lotId/lotName/unitPrice` también se completan (formato anterior); las compras viejas no tienen líneas y `itemsOf()` usa el lote de la propia compra.
+- `Event.adultsOnly` solo muestra la etiqueta +18 en el evento: no cambia la compra.
 - El evento se identifica por `id` o por `slug` (único, generado del título en un hook de `Event` con `utils/slug.js`); `GET /api/events/:id` acepta ambos. La portada (`imageUrl`) es una data URL que el admin reduce en el navegador.
 
 **Compra y pago** (`controllers/purchaseController.js`, `utils/purchases.js`, `utils/paymentWindow.js`): el checkout reserva cupo en una transacción (`reserveStock`) y crea la compra `pending`; la pasarela avisa por webhook y recién ahí se emiten los `Ticket`. Un barrido cada 5 minutos libera el cupo de compras vencidas. Reglas que no son obvias:
 - Pasarelas en `utils/payments/` (`mock`, `mercadopago`, `nave`), elegidas con `PAYMENT_PROVIDER`; cada una implementa `createPayment` y `resolveWebhook`. El webhook nunca confía en el body: consulta el estado real a la API de la pasarela. Producción usa Mercado Pago (hoy con credenciales de prueba).
 - El webhook es idempotente y se procesa con la compra bloqueada; un pago rechazado deja la compra `pending` (no libera cupo). Un pago aprobado tras vencer intenta reservar de nuevo, y si no hay cupo no emite entradas y loguea `PAGO APROBADO SIN CUPO`.
+- CSP con `helmet` en `server.js`: un recurso externo nuevo (script, iframe, API) hay que agregarlo ahí o el navegador lo bloquea.
 - Topes y límites por IP (`middleware/rateLimit.js`, variables en `.env.example`); `trust proxy` = 1 en producción.
 
 **Tests** (`backend/test/`): `node:test` con SQLite en memoria. Cada archivo fija `process.env.DATABASE_URL`, `JWT_SECRET`, `NODE_ENV=test` **antes** de `require("../server")`, hace `sequelize.sync({ force: true })` y levanta la app en un puerto libre. Las pasarelas se simulan, no hay tests contra sandboxes reales.

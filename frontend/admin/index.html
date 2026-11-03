@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Ticketera · Admin</title>
+<title>Kaiser Tikets · Admin</title>
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <header>
-  <h1>🎟️ Ticketera <span class="muted">· Admin</span></h1>
+  <h1>🎟️ Kaiser Tikets <span class="muted">· Admin</span></h1>
   <nav id="nav"></nav>
 </header>
 <main>
@@ -58,7 +58,7 @@ async function viewEvents() {
     $('view').innerHTML = `<h2>Eventos</h2>` + (events.length
       ? `<div class="grid">${events.map((e, i) => `
         <div class="card">
-          <h3>${esc(e.title)} <span class="tag ${e.status === 'published' ? 'completed' : 'failed'}">${eventStatus[e.status]}</span></h3>
+          <h3>${esc(e.title)} <span class="tag ${e.status === 'published' ? 'completed' : 'failed'}">${eventStatus[e.status]}</span>${e.adultsOnly ? ' <span class="tag">+18</span>' : ''}</h3>
           <div class="muted">📅 ${new Date(e.date).toLocaleString('es-AR')}<br>📍 ${esc(e.location)}<br>🔗 <a href="/e/${esc(e.slug)}" target="_blank">${location.origin}/e/${esc(e.slug)}</a></div>
           <div class="lots">${e.lots.map(l => `
             <div class="lot ${l.ticketsAvailable < 1 ? 'sold' : ''}">
@@ -102,6 +102,7 @@ async function viewEdit(id) {
         <div><label>Fecha y hora</label><input id="eDate" type="datetime-local" required value="${e.date ? toLocalInput(e.date) : ''}"></div>
         <div><label>Lugar</label><input id="eLoc" required value="${esc(e.location)}"></div>
       </div>
+      <label class="choice"><input id="eAdults" type="checkbox" ${e.adultsOnly ? 'checked' : ''}> Solo mayores de 18: muestra la etiqueta en el evento</label>
       <label>Estado</label>
       <select id="eStatus">
         ${Object.entries(eventStatus).map(([v, t]) => `<option value="${v}" ${e.status === v ? 'selected' : ''}>${t}</option>`).join('')}
@@ -234,7 +235,7 @@ async function submitEvent(ev, id) {
   const body = {
     title: $('eTitle').value, description: $('eDesc').value,
     date: new Date($('eDate').value).toISOString(), location: $('eLoc').value,
-    status: $('eStatus').value,
+    status: $('eStatus').value, adultsOnly: $('eAdults').checked,
   };
   if (coverData !== undefined) body.imageUrl = coverData;
   // Al crear van los lotes. Al editar solo los datos del evento: los lotes (precio y
@@ -297,7 +298,7 @@ async function viewBuyers(eventId) {
   $('view').innerHTML = '<p class="muted">Cargando…</p>';
   try {
     const [{ event }, { purchases }] = await Promise.all([
-      api('/events/' + eventId),
+      api('/events/' + eventId, { auth: true }),
       api('/purchases/event/' + eventId, { auth: true }),
     ]);
     buyers = { event, purchases };
