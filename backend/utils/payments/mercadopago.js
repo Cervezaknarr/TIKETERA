@@ -12,6 +12,8 @@
 const { request } = require("./http");
 
 const { paymentWindowMinutes } = require("../paymentWindow");
+const { getActiveAccount, tokenOfAccount } = require("../paymentAccounts");
+const { decrypt } = require("../secrets");
 
 const API = "https://api.mercadopago.com";
 
@@ -31,12 +33,27 @@ const STATUS_MAP = {
   charged_back: "rejected",
 };
 
-const getConfig = () => {
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Credenciales de Mercado Pago. Con `accountId` se usa esa cuenta (así se confirma
+// un pago aunque la cuenta activa haya cambiado); sin él, la cuenta activa del panel
+// y, si no hay ninguna, el token de MERCADOPAGO_ACCESS_TOKEN
+const getConfig = async (accountId) => {
+  if (accountId) {
+    const accessToken = await tokenOfAccount(accountId);
+    if (!accessToken) throw new Error(`Mercado Pago: la cuenta ${accountId} no existe`);
+    return { accountId, accessToken };
+  }
+  const active = accountId === undefined ? await getActiveAccount() : null;
+  if (active) return { accountId: active.id, accessToken: decrypt(active.accessToken) };
+
   const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
   if (!accessToken) {
-    throw new Error("Mercado Pago: faltan variables de entorno: MERCADOPAGO_ACCESS_TOKEN");
+    throw new Error(
+      "Mercado Pago: no hay una cuenta activa ni MERCADOPAGO_ACCESS_TOKEN configurado"
+    );
   }
-  return { accessToken };
+  return { accountId: null, accessToken };
 };
 
 const api = (config, path, options, what) =>
@@ -71,10 +88,11 @@ module.exports = {
    * Crear la preferencia de pago en Mercado Pago
    * @param {{ purchase: object, event: object, items?: object[] }} data
    *   items: líneas de la compra { lotName, unitPrice, quantity }; sin ellas se usa la compra entera
-   * @returns {Promise<{ gatewayId: string, checkoutUrl: string }>}
+   * @returns {Promise<{ gatewayId: string, checkoutUrl: string, accountId: string|null }>}
+   *   accountId: la cuenta con la que se creó el pago (se guarda en la compra)
    */
   async createPayment({ purchase, event, items }) {
-    const config = getConfig();
+    const config = await getConfig();
     const frontend = process.env.FRONTEND_URL || "http://localhost:5500";
     const returnUrl = `${frontend}/#/entradas/${purchase.accessToken}`;
 
@@ -96,9 +114,11 @@ module.exports = {
     };
     // Mercado Pago solo acepta auto_return con back_urls https
     if (frontend.startsWith("https://")) payload.auto_return = "approved";
-    // A dónde avisa Mercado Pago los pagos: tiene que ser una URL pública
+    // A dónde avisa Mercado Pago los pagos: tiene que ser una URL pública. Lleva la
+    // cuenta (?acc=) para confirmar el pago con su token
     if (process.env.BACKEND_URL) {
-      payload.notification_url = `${process.env.BACKEND_URL}/api/purchases/webhook`;
+      const account = config.accountId ? `?acc=${config.accountId}` : "";
+      payload.notification_url = `${process.env.BACKEND_URL}/api/purchases/webhook${account}`;
     }
 
     const data = await api(
@@ -109,18 +129,28 @@ module.exports = {
     );
     if (!data.init_point) throw new Error("Mercado Pago: la respuesta no incluye init_point");
 
-    return { gatewayId: String(purchase.id), checkoutUrl: data.init_point };
+    return {
+      gatewayId: String(purchase.id),
+      checkoutUrl: data.init_point,
+      accountId: config.accountId,
+    };
   },
 
   /**
    * Interpretar un webhook de Mercado Pago. Del body/query solo se toma el id del
    * pago y el estado real se consulta a la API con el access token del comercio
-   * @returns {Promise<{ gatewayId: string, status: string }|null>} null si no es válido
+   * @returns {Promise<{ gatewayId: string, status: string, amount: number, currency: string }|null>}
+   *   null si no es válido
    */
   async resolveWebhook(req) {
-    const config = getConfig();
     const paymentId = paymentIdFrom(req);
     if (!paymentId) return null;
+
+    // La cuenta viene en la URL de aviso. Sin ella (compras anteriores a las cuentas)
+    // se usa el token de las variables de entorno, nunca la cuenta activa
+    const acc = (req.query || {}).acc;
+    if (acc !== undefined && !UUID.test(String(acc))) return null;
+    const config = await getConfig(acc || null);
 
     let payment;
     try {
@@ -135,6 +165,11 @@ module.exports = {
     const status = STATUS_MAP[payment.status];
     if (!payment.external_reference || !status) return null;
 
-    return { gatewayId: String(payment.external_reference), status };
+    return {
+      gatewayId: String(payment.external_reference),
+      status,
+      amount: payment.transaction_amount,
+      currency: payment.currency_id,
+    };
   },
 };

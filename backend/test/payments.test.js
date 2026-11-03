@@ -369,7 +369,7 @@ test("Mercado Pago avisa si falta el access token", async () => {
   const mp = require("../utils/payments/mercadopago");
   await assert.rejects(
     mp.createPayment({ purchase: {}, event: {} }),
-    /faltan variables de entorno: MERCADOPAGO_ACCESS_TOKEN/
+    /no hay una cuenta activa ni MERCADOPAGO_ACCESS_TOKEN configurado/
   );
 });
 
@@ -394,6 +394,7 @@ test("Mercado Pago crea la preferencia con la compra como referencia", async () 
       assert.deepEqual(result, {
         gatewayId: "11111111-1111-4111-8111-111111111111",
         checkoutUrl: "https://mp.test/checkout?pref=pref-1",
+        accountId: null, // sin cuentas en el panel se cobra con el token del entorno
       });
 
       const { url, options } = calls[0];
@@ -420,7 +421,9 @@ test("el webhook de Mercado Pago consulta el pago y mapea su estado", async () =
   ];
   for (const [mpStatus, expected] of cases) {
     await withMercadoPago(
-      () => ({ body: { status: mpStatus, external_reference: "compra-1" } }),
+      () => ({
+        body: { status: mpStatus, external_reference: "compra-1", transaction_amount: 2500, currency_id: "ARS" },
+      }),
       async (calls) => {
         // El id llega en el query o en el body
         for (const req of [
@@ -429,7 +432,11 @@ test("el webhook de Mercado Pago consulta el pago y mapea su estado", async () =
         ]) {
           calls.length = 0;
           const result = await mp.resolveWebhook(req);
-          assert.deepEqual(result, { gatewayId: "compra-1", status: expected }, mpStatus);
+          assert.deepEqual(
+            result,
+            { gatewayId: "compra-1", status: expected, amount: 2500, currency: "ARS" },
+            mpStatus
+          );
           assert.equal(calls[0].url, "https://api.mercadopago.com/v1/payments/123456");
         }
       }

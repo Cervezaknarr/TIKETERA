@@ -61,6 +61,13 @@ const Purchase = sequelize.define("Purchase", {
     type: DataTypes.STRING,
     allowNull: true, // Será null hasta que se inicie el proceso de pago
   },
+  // Cuenta de pago con la que se creó la compra: el aviso de pago se confirma con
+  // su token aunque después cambie la cuenta activa. null = token de las variables
+  // de entorno (compras anteriores a las cuentas)
+  paymentAccountId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+  },
   purchaseDate: {
     type: DataTypes.DATE,
     defaultValue: DataTypes.NOW,

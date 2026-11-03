@@ -103,28 +103,32 @@ async function viewBuy(id) {
     ({ event: currentEvent } = await api('/events/' + id));
   } catch (err) { return flash(err.message, 'err'); }
   const e = currentEvent;
+  // El admin puede pausar las ventas (por ejemplo al cambiar la cuenta de cobro)
+  const paused = await api('/purchases/status').then(r => r.salesPaused).catch(() => false);
   // Si el evento cambió mientras tanto, la selección se ajusta a lo que hay
-  for (const l of e.lots) cart[l.id] = Math.min(cart[l.id] || 0, l.ticketsAvailable, MAX_PER_PURCHASE);
+  for (const l of e.lots) cart[l.id] = paused ? 0 : Math.min(cart[l.id] || 0, l.ticketsAvailable, MAX_PER_PURCHASE);
   document.title = e.title;
   const when = fmtWhen(e.date);
   const lotCard = l => {
-    const max = Math.min(l.ticketsAvailable, MAX_PER_PURCHASE);
+    const max = paused ? 0 : Math.min(l.ticketsAvailable, MAX_PER_PURCHASE);
     return `
       <div class="ev-lot ${max < 1 ? 'sold' : ''} ${cart[l.id] > 0 ? 'on' : ''}">
         <span class="ev-lot-info">
           <span class="ev-lot-name">${esc(l.name)}</span>
-          <span class="ev-lot-price">${max < 1 ? '<span class="ev-soldtag">Agotada</span>' : money(l.price)}</span>
+          <span class="ev-lot-price">${l.ticketsAvailable < 1 ? '<span class="ev-soldtag">Agotada</span>' : money(l.price)}</span>
         </span>
         ${max < 1 ? '' : `<span class="ev-lot-qty"><span>Cantidad</span>
-          <select data-lot="${l.id}" aria-label="Cantidad de ${esc(l.name)}" onchange="setQty('${l.id}', this)">
-            ${Array.from({ length: max + 1 }, (_, i) => `<option ${i === cart[l.id] ? 'selected' : ''}>${i}</option>`).join('')}
-          </select></span>`}
+          <span class="ev-stepper" data-lot="${l.id}" data-max="${max}">
+            <button type="button" class="ev-step" aria-label="Quitar una entrada de ${esc(l.name)}" onclick="stepQty('${l.id}', -1)">−</button>
+            <output class="ev-qty" aria-live="polite">${cart[l.id] || 0}</output>
+            <button type="button" class="ev-step" aria-label="Agregar una entrada de ${esc(l.name)}" onclick="stepQty('${l.id}', 1)">+</button>
+          </span></span>`}
       </div>`;
   };
   const anyFree = e.lots.some(l => l.ticketsAvailable > 0);
   $('view').innerHTML = `
   <div class="ev-hero ${e.imageUrl ? '' : 'no-cover'}">${e.imageUrl ? `<img src="${esc(e.imageUrl)}" alt="Portada de ${esc(e.title)}">` : datePoster(e.date)}</div>
-  <div class="ev-layout">
+  <div class="ev-layout with-map">
     <section>
       <h2 class="ev-title">${esc(e.title)}</h2>
       <div class="ev-meta">
@@ -133,37 +137,43 @@ async function viewBuy(id) {
         ${e.adultsOnly ? '<span class="ev-chip">🔞 Solo mayores de 18</span>' : ''}
       </div>
       <p class="ev-desc">${esc(e.description)}</p>
-      ${mapBlock(e)}
     </section>
     <form class="ev-panel" onsubmit="goCheckout(event)">
       <h2>Entradas</h2>
       <div class="ev-lots">${e.lots.map(lotCard).join('')}</div>
-      <p class="ev-note">${anyFree ? `Podés combinar tipos de entrada. Hasta ${MAX_PER_PURCHASE} por compra.` : 'Las entradas de este evento están agotadas.'}</p>
+      <p class="ev-note">${paused ? 'Las ventas están pausadas momentáneamente. Volvé a intentar en unos minutos.' : anyFree ? `Podés combinar tipos de entrada. Hasta ${MAX_PER_PURCHASE} por compra.` : 'Las entradas de este evento están agotadas.'}</p>
       <div class="ev-pay">
         <div class="ev-total"><small>Total</small><b id="bTotal"></b></div>
         <button class="ev-btn" id="bPay" disabled>Comprar</button>
       </div>
     </form>
+    ${mapBlock(e)}
   </div>`;
   updTotal();
 }
 
 
 // Cambiar la cantidad de un tipo de entrada, respetando el máximo por compra
-function setQty(lotId, select) {
+function stepQty(lotId, delta) {
+  const lot = currentEvent.lots.find(l => l.id === lotId);
   const before = cart[lotId] || 0;
-  cart[lotId] = Number(select.value);
+  const next = before + delta;
+  if (next < 0 || next > Math.min(lot.ticketsAvailable, MAX_PER_PURCHASE)) return;
+  cart[lotId] = next;
   if (cartCount() > MAX_PER_PURCHASE) {
     cart[lotId] = before;
-    select.value = String(before);
     flash(`Podés comprar hasta ${MAX_PER_PURCHASE} entradas por compra`, 'err');
   } else flash('');
   updTotal();
 }
 function updTotal() {
-  document.querySelectorAll('.ev-lot').forEach(card => {
-    const sel = card.querySelector('select');
-    card.classList.toggle('on', !!sel && Number(sel.value) > 0);
+  document.querySelectorAll('.ev-stepper').forEach(st => {
+    const q = cart[st.dataset.lot] || 0;
+    const [minus, plus] = st.querySelectorAll('button');
+    st.querySelector('output').textContent = q;
+    minus.disabled = q <= 0;
+    plus.disabled = q >= Number(st.dataset.max) || cartCount() >= MAX_PER_PURCHASE;
+    st.closest('.ev-lot').classList.toggle('on', q > 0);
   });
   const n = cartCount();
   $('bTotal').textContent = n ? money(cartTotal()) : '';

@@ -11,6 +11,7 @@ const { generateTicketCode } = require("../utils/ticketCode");
 const { sendTicketsEmail } = require("../utils/mailer");
 const { getProvider } = require("../utils/payments");
 const { paymentWindowMinutes } = require("../utils/paymentWindow");
+const { isSalesPaused } = require("../utils/paymentAccounts");
 
 // Hasta cuándo puede pagar el comprador (para mostrarle el contador)
 const paymentDeadline = (purchase) =>
@@ -45,6 +46,14 @@ const itemsSummary = (items) => {
  */
 const createCheckoutSession = async (req, res) => {
   try {
+    // El admin pausa las ventas, por ejemplo mientras cambia la cuenta de cobro
+    if (await isSalesPaused()) {
+      return res.status(503).json({
+        success: false,
+        message: "Las ventas están pausadas momentáneamente. Probá de nuevo en unos minutos",
+      });
+    }
+
     const { eventId, buyerEmail, buyerName } = req.body;
     const requested = req.body.items === undefined
       ? [{ lotId: req.body.lotId, quantity: req.body.quantity }]
@@ -218,6 +227,7 @@ const createCheckoutSession = async (req, res) => {
     try {
       payment = await getProvider().createPayment({ purchase, event, items });
       purchase.paymentGatewayId = payment.gatewayId;
+      purchase.paymentAccountId = payment.accountId || null;
       await purchase.save();
     } catch (error) {
       await sequelize.transaction(async (transaction) => {
@@ -274,7 +284,7 @@ const handlePaymentWebhook = async (req, res) => {
       });
     }
 
-    const { gatewayId: paymentGatewayId, status } = notification;
+    const { gatewayId: paymentGatewayId, status, amount, currency } = notification;
 
     // Pago todavía en curso: no hay nada que hacer, la pasarela avisará después
     if (status === "pending") {
@@ -301,6 +311,17 @@ const handlePaymentWebhook = async (req, res) => {
       if (purchase.status !== "pending" && !lateApproval) return "already_processed";
 
       if (status === "approved") {
+        // Si la pasarela informa el monto cobrado, tiene que ser el de la compra: no se
+        // emiten entradas por un pago menor (o en otra moneda). La compra queda como estaba
+        const paidAmount = amount === undefined ? null : Math.round(Number(amount) * 100);
+        if (
+          paidAmount !== null &&
+          (paidAmount !== Math.round(Number(purchase.totalPrice) * 100) ||
+            (currency && currency !== "ARS"))
+        ) {
+          return "amount_mismatch";
+        }
+
         const items = await itemsOf(purchase, transaction);
         if (lateApproval && (await reserveItems(items, transaction))) {
           return "paid_without_stock";
@@ -344,6 +365,17 @@ const handlePaymentWebhook = async (req, res) => {
       });
     }
 
+    if (result === "amount_mismatch") {
+      // Hay que revisar el pago a mano. Se responde 200 para que la pasarela no reintente
+      console.error(
+        `PAGO CON MONTO DISTINTO: la compra con pasarela ${paymentGatewayId} se aprobó por ${amount} ${currency || ""} y no coincide con lo que se cobraba. No se emitieron entradas.`
+      );
+      return res.status(200).json({
+        success: true,
+        message: "El monto pagado no coincide con la compra: requiere revisión",
+      });
+    }
+
     if (result === "paid_without_stock") {
       // Hay que devolverle la plata al comprador a mano. Se responde 200 para que
       // la pasarela no siga reintentando el aviso
@@ -371,6 +403,20 @@ const handlePaymentWebhook = async (req, res) => {
       success: false,
       message: "Error al procesar el webhook",
     });
+  }
+};
+
+/**
+ * @desc    Saber si las ventas están pausadas (la web lo usa para avisar antes de comprar)
+ * @route   GET /api/purchases/status
+ * @access  Public
+ */
+const getSalesStatus = async (req, res) => {
+  try {
+    res.json({ success: true, salesPaused: await isSalesPaused() });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Error al consultar el estado de las ventas" });
   }
 };
 
@@ -495,6 +541,7 @@ const getPurchaseTickets = async (req, res) => {
 module.exports = {
   createCheckoutSession,
   handlePaymentWebhook,
+  getSalesStatus,
   getEventPurchases,
   getPurchaseTickets,
 };

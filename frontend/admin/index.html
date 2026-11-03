@@ -28,6 +28,7 @@ function renderNav() {
     ? `<span class="muted">${esc(session.user.name)}</span>
        <button class="ghost" onclick="go('events')">Eventos</button>
        <button class="ghost" onclick="go('edit')">Crear evento</button>
+       <button class="ghost" onclick="go('payments')">Pagos</button>
        <button class="ghost" onclick="go('users')">Staff</button>
        <a href="/staff/" class="ghost-link">Escáner</a>
        <button onclick="logout()">Salir</button>`
@@ -42,7 +43,7 @@ function go(view, arg) {
   if (!session.token) {
     return renderLogin('Administración', ['admin'], (token, user) => { auth.set(token, user); go('events'); });
   }
-  ({ events: viewEvents, edit: viewEdit, buyers: viewBuyers, users: viewUsers }[view])(arg);
+  ({ events: viewEvents, edit: viewEdit, buyers: viewBuyers, users: viewUsers, payments: viewPayments }[view])(arg);
 }
 
 const eventStatus = { published: 'Publicado', draft: 'Borrador', cancelled: 'Cancelado' };
@@ -101,7 +102,7 @@ async function viewEdit(id) {
       <div class="row">
         <div><label>Fecha y hora</label><input id="eDate" type="datetime-local" required value="${e.date ? toLocalInput(e.date) : ''}"></div>
         <div><label>Lugar</label><input id="eLoc" required value="${esc(e.location)}"></div>
-      </div>
+      </div>
       <label class="choice"><input id="eAdults" type="checkbox" ${e.adultsOnly ? 'checked' : ''}> Solo mayores de 18: muestra la etiqueta en el evento</label>
       <label>Estado</label>
       <select id="eStatus">
@@ -383,6 +384,90 @@ function exportBuyersCsv() {
   a.download = `compradores-${buyers.event.title.replace(/[^\w-]+/g, '_')}.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+// ---------- Pagos: cuentas de Mercado Pago y pausa de ventas ----------
+async function viewPayments() {
+  $('view').innerHTML = '<p class="muted">Cargando…</p>';
+  let d;
+  try { d = await api('/payment-accounts', { auth: true }); } catch (err) { $('view').innerHTML = ''; return flash(err.message, 'err'); }
+  const active = d.accounts.find(a => a.active);
+  const charging = d.provider !== 'mercadopago' ? `la pasarela <b>${esc(d.provider)}</b>`
+    : active ? `<b>${esc(active.name)}</b> (…${esc(active.tokenHint)})`
+    : d.envToken ? 'el token de las variables de entorno de Render' : '<b>ninguna cuenta</b>: no se puede cobrar';
+
+  $('view').innerHTML = `
+  <h2>Pagos</h2>
+  <div class="card" style="margin-bottom:14px">
+    <h3>Ventas ${d.salesPaused ? '<span class="tag failed">Pausadas</span>' : '<span class="tag completed">Abiertas</span>'}</h3>
+    <p class="muted">Hoy se cobra con ${charging}.<br>
+      Compras sin terminar de pagar: <b>${d.pendingPurchases}</b>. Las que ya están en curso se siguen confirmando con la cuenta con la que se crearon.</p>
+    <p><button class="${d.salesPaused ? '' : 'danger'}" onclick="setSalesPaused(${!d.salesPaused})">${d.salesPaused ? 'Reanudar ventas' : 'Pausar ventas'}</button></p>
+    <p class="muted">Para cambiar de cuenta: pausá las ventas, activá la otra cuenta y reanudá. Mientras estén pausadas nadie puede iniciar una compra nueva.</p>
+  </div>
+
+  <div class="card table-wrap" style="margin-bottom:14px">
+    <h3>Cuentas de Mercado Pago</h3>
+    ${d.provider !== 'mercadopago' ? `<p class="muted">La pasarela configurada es <b>${esc(d.provider)}</b>: las cuentas solo se usan con Mercado Pago.</p>` : ''}
+    ${d.accounts.length ? `<table>
+      <thead><tr><th>Cuenta</th><th>Token</th><th>Estado</th><th></th></tr></thead>
+      <tbody>${d.accounts.map(a => `
+        <tr>
+          <td><b>${esc(a.name)}</b></td>
+          <td class="muted">…${esc(a.tokenHint)}</td>
+          <td>${a.active ? '<span class="tag completed">Activa</span>' : '<span class="tag">Inactiva</span>'}</td>
+          <td style="white-space:nowrap">
+            ${a.active ? '' : `<button class="ghost" ${d.salesPaused ? '' : 'disabled title="Pausá las ventas para cambiar de cuenta"'} onclick="activateAccount('${a.id}', this.dataset.name)" data-name="${esc(a.name)}">Activar</button>
+            <button class="ghost danger" onclick="deleteAccount('${a.id}', this.dataset.name)" data-name="${esc(a.name)}">Borrar</button>`}
+          </td>
+        </tr>`).join('')}
+      </tbody></table>` : '<p class="muted">Todavía no cargaste ninguna cuenta.</p>'}
+  </div>
+
+  <div class="card">
+    <h3>Agregar una cuenta</h3>
+    ${d.keyConfigured ? '' : '<p class="muted"><b>Falta configurar PAYMENT_ACCOUNTS_KEY</b> en Render (una frase larga y secreta): con ella se cifran los tokens. Sin esa variable no se pueden guardar cuentas.</p>'}
+    <p class="muted">Usá el <b>Access Token de producción</b> de la aplicación de Mercado Pago de esa cuenta. Se verifica con Mercado Pago, se guarda cifrado y no se vuelve a mostrar.</p>
+    <form onsubmit="submitAccount(event)">
+      <label>Nombre (para reconocerla)</label><input id="aName" required maxlength="60" placeholder="Cuenta de Juan">
+      <label>Access Token de producción</label><input id="aToken" type="password" required autocomplete="off">
+      <p><button ${d.keyConfigured ? '' : 'disabled'}>Agregar cuenta</button></p>
+    </form>
+  </div>`;
+}
+
+async function submitAccount(ev) {
+  ev.preventDefault();
+  try {
+    await api('/payment-accounts', { method: 'POST', auth: true, body: { name: $('aName').value, accessToken: $('aToken').value } });
+    await viewPayments();
+    flash('Cuenta agregada. Todavía no cobra: activala cuando quieras usarla.');
+  } catch (err) { flash(err.message, 'err'); }
+}
+async function setSalesPaused(paused) {
+  if (!paused || confirm('¿Pausar las ventas? Nadie va a poder iniciar compras hasta que las reanudes.')) {
+    try {
+      await api('/payment-accounts/sales-paused', { method: 'PUT', auth: true, body: { paused } });
+      await viewPayments();
+      flash(paused ? 'Ventas pausadas' : 'Ventas reanudadas');
+    } catch (err) { flash(err.message, 'err'); }
+  }
+}
+async function activateAccount(id, name) {
+  if (!confirm(`¿Cobrar con ${name} desde ahora? Las compras en curso se siguen confirmando con la cuenta anterior.`)) return;
+  try {
+    await api(`/payment-accounts/${id}/activate`, { method: 'POST', auth: true });
+    await viewPayments();
+    flash(`Ahora se cobra con ${name}. Acordate de reanudar las ventas.`);
+  } catch (err) { flash(err.message, 'err'); }
+}
+async function deleteAccount(id, name) {
+  if (!confirm(`¿Borrar la cuenta ${name}?`)) return;
+  try {
+    await api('/payment-accounts/' + id, { method: 'DELETE', auth: true });
+    await viewPayments();
+    flash('Cuenta borrada');
+  } catch (err) { flash(err.message, 'err'); }
 }
 
 // ---------- Usuarios staff ----------

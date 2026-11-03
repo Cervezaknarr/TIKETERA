@@ -58,10 +58,12 @@ body.ev {
 .ev-lot-price { color:var(--muted); font-size:var(--fs-s); }
 .ev-lot-qty { flex:0 0 auto; display:flex; flex-direction:column; align-items:flex-end; }
 .ev-lot-qty span { font-size:var(--fs-xs); color:var(--muted); margin-bottom:3px; font-weight:500; }
-.ev-lot-qty select { width:84px; padding:9px 30px 9px 12px; border-radius:10px; background:var(--card);
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%236e6e73' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat:no-repeat; background-position:right 11px center; border:1px solid var(--control-border); }
-.ev-lot-qty select:disabled { opacity:.5; }
+.ev-lot-qty .ev-stepper { display:flex; align-items:center; gap:2px; margin:0; font-size:var(--fs-m); color:var(--text);
+  background:var(--card); border:1px solid var(--control-border); border-radius:980px; padding:3px; }
+.ev-stepper .ev-step { width:34px; height:34px; padding:0; border-radius:50%; border:0; background:transparent; color:var(--accent);
+  font-size:20px; line-height:1; display:flex; align-items:center; justify-content:center; }
+.ev-stepper .ev-step:disabled { opacity:.35; }
+.ev-stepper .ev-qty { min-width:28px; text-align:center; font-weight:600; font-variant-numeric:tabular-nums; }
 .ev-soldtag { font-size:var(--fs-xs); color:var(--err); font-weight:600; }
 
 /* Barra de pago: pegada abajo en el celular */
@@ -99,6 +101,11 @@ body.ev {
   .ev main { padding-top:32px; }
   .ev-layout { grid-template-columns:minmax(0,1fr) 400px; gap:40px; align-items:start; }
   .ev-panel { position:sticky; top:76px; }
+  /* Con mapa: la info y el mapa a la izquierda, las entradas a la derecha */
+  .ev-layout.with-map { grid-template-rows:auto 1fr; row-gap:24px; }
+  .ev-layout.with-map > section { grid-column:1; grid-row:1; }
+  .ev-layout.with-map > .ev-map { grid-column:1; grid-row:2; margin-top:0; align-self:start; }
+  .ev-layout.with-map > .ev-panel { grid-column:2; grid-row:1 / span 2; }
 }
 
 /* Paso 2: resumen de la compra y reloj */
@@ -119,4 +126,9 @@ body.ev {
 
 /* Mapa de la ubicación */
 .ev-map { position:relative; margin-top:24px; border-radius:22px; overflow:hidden; box-shadow:var(--shadow); border:1px solid var(--border); background:var(--card); }
+.ev-layout > .ev-map { margin-top:0; }
 .ev-map iframe { display:block; width:100%; height:300px; border:0; }
+/* Google no ofrece modo oscuro en el mapa embebido: se invierte y se rota el matiz para conservar los colores */
+@media (prefers-color-scheme: dark) {
+  .ev-map iframe { filter:invert(92%) hue-rotate(180deg) contrast(.9) saturate(.8); }
+}

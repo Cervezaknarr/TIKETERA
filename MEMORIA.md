@@ -56,9 +56,18 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - `npm audit fix` subió `body-parser`. Quedan sin arreglo `uuid` y `sequelize` (moderadas): el arreglo automático es incompatible.
 - **Al desplegar:** agrega la columna `User.tokenVersion`: NO tener `DB_SYNC_ALTER=false`.
 
+### Cuentas de Mercado Pago cambiables y pausa de ventas (2026-11-02, sin commitear)
+- **Motivo:** el organizador va a cobrar con distintas cuentas de Mercado Pago a lo largo de la venta (una primero, otra después). Con un solo `MERCADOPAGO_ACCESS_TOKEN`, cambiar de cuenta con compras en curso hacía que el aviso de pago diera 404 y el comprador pagara sin recibir la entrada.
+- **Cuentas en la base** (`PaymentAccount`, `backend/models/`): nombre, access token **cifrado** (AES-256-GCM, clave `PAYMENT_ACCOUNTS_KEY`; `utils/secrets.js`) y cuál está activa. Se administran en `/admin` > Pagos (`/api/payment-accounts`, solo admin). Al agregar una, se verifica el token contra `GET /users/me` de Mercado Pago. El token nunca vuelve al navegador (solo los últimos 4 caracteres).
+- **Cada compra recuerda su cuenta** (`Purchase.paymentAccountId`) y la `notification_url` lleva `?acc=<id>`: el webhook confirma el pago con el token de esa cuenta aunque después cambie la activa. Sin `acc` (compras anteriores) usa `MERCADOPAGO_ACCESS_TOKEN`, nunca la cuenta activa. Sin cuenta activa, los pagos nuevos también salen por ese token.
+- **Pausa de ventas** (`Setting`, clave `salesPaused`): el checkout responde 503 y la página del evento avisa y no deja elegir entradas. Los webhooks y las entradas ya emitidas siguen andando. **Activar una cuenta exige tener las ventas pausadas** (409 si no): flujo = pausar, activar la otra, reanudar. Una cuenta activa o con compras no se puede borrar (su token hace falta para confirmar pagos).
+- **Validación del monto en el webhook** (pendiente cerrado): si la pasarela informa el monto (hoy Mercado Pago: `transaction_amount` y `currency_id`) y no coincide con el de la compra o no es ARS, no se emiten entradas, la compra sigue `pending` y el log dice `PAGO CON MONTO DISTINTO` (hay que revisarlo a mano). Mock y Nave no informan monto y no se validan.
+- **Al desplegar:** agrega las tablas `PaymentAccounts` y `Settings` y la columna `Purchases.paymentAccountId`: NO tener `DB_SYNC_ALTER=false`. Hay que **cargar `PAYMENT_ACCOUNTS_KEY` en Render** (frase larga y secreta; si se pierde, se vuelven a cargar las cuentas).
+- 114 tests pasan (11 nuevos en `test/paymentAccounts.test.js`).
+
 ## Decisiones tomadas
 - **Pasarela elegida: Mercado Pago.** Nave exige CUIT y el usuario no tiene. Nave queda implementado por si se consigue.
-- **Cobro del primer evento:** por ahora con la cuenta del usuario, solo para probar y dejar todo configurado. Después se usa la cuenta del organizador, o Marketplace de Mercado Pago si hay varios organizadores. Cambiar de cuenta es cambiar `MERCADOPAGO_ACCESS_TOKEN`.
+- **Cobro del primer evento:** por ahora con la cuenta del usuario, solo para probar y dejar todo configurado. Después se usa la cuenta del organizador, o Marketplace de Mercado Pago si hay varios organizadores. Desde el 2026-11-02 se cambia de cuenta desde `/admin` > Pagos, sin tocar Render (ver "Cuentas de Mercado Pago cambiables").
 - **Un pago rechazado queda "pendiente"** y no libera el cupo, porque el comprador puede reintentar sobre la misma preferencia. Si se liberara y el reintento se aprobara, se cobraría sin emitir entradas. Solo cancelado, devuelto o contracargo liberan el cupo.
 - **Los webhooks no se creen:** del aviso solo se toma el id del pago y el estado real se consulta a la API con las credenciales del comercio. No se sigue ninguna URL que venga en el body.
 - **El id de la compra** es el `external_reference` / `external_payment_id` que se manda a la pasarela, y también el `gatewayId` para encontrar la compra al llegar el webhook.
@@ -66,7 +75,7 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 
 ## Configuración (`backend/.env`, ver `.env.example`)
 - `PAYMENT_PROVIDER`: `mock` | `mercadopago` | `nave`
-- Mercado Pago: `MERCADOPAGO_ACCESS_TOKEN`, `BACKEND_URL` (dirección pública del backend, ahí avisa los pagos a `/api/purchases/webhook`)
+- Mercado Pago: `PAYMENT_ACCOUNTS_KEY` (clave que cifra los tokens de las cuentas del panel), `MERCADOPAGO_ACCESS_TOKEN` (cuenta por defecto si no hay ninguna activa en el panel), `BACKEND_URL` (dirección pública del backend, ahí avisa los pagos a `/api/purchases/webhook`)
 - Nave: `NAVE_ENV`, `NAVE_CLIENT_ID`, `NAVE_CLIENT_SECRET`, `NAVE_AUDIENCE`, `NAVE_POS_ID`
 - `FRONTEND_URL`: a dónde vuelve el comprador después de pagar y base del link "ver mis entradas"
 - `RESEND_API_KEY`, `RESEND_FROM`: email de entradas (vacío = no se envía, el link sale por consola)
@@ -131,7 +140,8 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 ### Código
 - [x] **Liberar el cupo de compras abandonadas o vencidas** (2026-10-20, `backend/utils/purchases.js`). Cada 5 minutos el servidor pasa las compras `pending` de más de 40 minutos (`PURCHASE_HOLD_MINUTES`, la preferencia de pago vence a los 30) a `failed` y devuelve su cupo. Si un pago se aprueba después de vencer (ej. efectivo), se intenta reservar de nuevo el cupo y completar la compra; si ya no queda, **no se emiten entradas** y el log dice `PAGO APROBADO SIN CUPO` (hay que reembolsar a mano desde Mercado Pago). 37 tests pasan.
 - [ ] Mirar los logs de Render de vez en cuando buscando `PAGO APROBADO SIN CUPO`
-- [ ] Verificar que el monto pagado coincida con el de la compra al procesar el webhook
+- [x] Verificar que el monto pagado coincida con el de la compra al procesar el webhook (2026-11-02)
+- [ ] Mirar los logs de Render buscando también `PAGO CON MONTO DISTINTO`
 - [ ] **Contador de la reserva en la página del comprador:** mostrar cuánto le queda de los 10 min (`PAYMENT_WINDOW_MINUTES`) para pagar, con aviso al vencer. Pendiente en el frontend público (lo toca la sesión estética); el backend ya devuelve `purchase.expiresAt` en el checkout y en `GET /api/purchases/tickets/:token` (null si ya no está pendiente); falta el contador en el frontend
 - [ ] Probar el flujo contra el sandbox real (hasta ahora solo hay tests con la API simulada)
 - [ ] Probar la atomicidad de las compras simultáneas con Postgres (SQLite no lo permite)
