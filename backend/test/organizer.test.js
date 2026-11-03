@@ -19,6 +19,7 @@ const Event = require("../models/Event");
 const Lot = require("../models/Lot");
 const Purchase = require("../models/Purchase");
 const PaymentAccount = require("../models/PaymentAccount");
+const StaffEvent = require("../models/StaffEvent");
 
 const TOKEN_A = "APP_USR-cuenta-org-a-1111111";
 const TOKEN_B = "APP_USR-cuenta-org-b-2222222";
@@ -29,7 +30,7 @@ let baseUrl;
 let admin;
 let orgA; // organizador del evento A
 let orgB; // organizador del evento B
-let generalStaff; // staff general (creado por el admin)
+let generalStaff; // staff creado por el admin (se asigna al evento B)
 let eventA;
 let eventB;
 let eventFree; // sin organizador
@@ -119,7 +120,7 @@ test("el admin crea un organizador y lo asigna a un evento; el login lo reconoce
   assert.equal(event.body.event.organizerId, created.body.user.id);
 
   // Mandar role admin nunca crea un admin: se crea staff
-  const notAdmin = await as("admin", "POST", "/api/users", { name: "x", email: "x@t.com", password: "secret123", role: "admin" });
+  const notAdmin = await as("admin", "POST", "/api/users", { name: "x", email: "x@t.com", password: "secret123", role: "admin", eventIds: [event.body.event.id] });
   assert.equal(notAdmin.body.user.role, "staff");
   // Un usuario que no es organizador no se puede asignar a un evento
   const bad = await as("admin", "PUT", `/api/events/${event.body.event.id}`, { organizerId: generalStaff.id });
@@ -184,7 +185,7 @@ test("el organizador crea staff solo para su evento, y solo puede gestionar el s
     name: "Puerta A", email: "puertaa@test.com", password: "secret123",
   });
   assert.equal(created.status, 201);
-  assert.equal(created.body.user.eventId, eventA.id);
+  assert.deepEqual(created.body.user.eventIds, [eventA.id]);
   const staffA = await User.findByPk(created.body.user.id);
   assert.equal(staffA.role, "staff");
   tokens.staffA = sign(staffA);
@@ -237,8 +238,11 @@ test("escanear: cada uno solo en los eventos que le corresponden", async () => {
   // organizador: solo sus eventos
   assert.equal((await stats("orgA", eventA)).status, 200);
   assert.equal((await stats("orgA", eventB)).status, 403);
-  // staff general y admin: todos
+  // staff asignado por el admin: solo el evento B. Sin asignación no escanea nada
+  assert.equal((await stats("staff", eventB)).status, 403);
+  await as("admin", "PUT", `/api/users/${generalStaff.id}`, { eventIds: [eventB.id] });
   assert.equal((await stats("staff", eventB)).status, 200);
+  assert.equal((await stats("staff", eventA)).status, 403);
   assert.equal((await stats("admin", eventA)).status, 200);
 
   // El selector del escáner solo lista lo que cada uno puede escanear
@@ -247,7 +251,7 @@ test("escanear: cada uno solo en los eventos que le corresponden", async () => {
   assert.deepEqual(await ids("staffA"), [eventA.id]);
   assert.deepEqual(await ids("orgA"), [eventA.id]);
   assert.deepEqual(await ids("orgB"), [eventB.id]);
-  assert.ok((await ids("staff")).includes(eventB.id));
+  assert.deepEqual(await ids("staff"), [eventB.id]);
   assert.ok((await ids("admin")).includes(eventA.id));
 });
 
@@ -332,4 +336,50 @@ test("borrar un organizador deja sus eventos sin organizador", async () => {
   const event = await newEvent("De quien se va", gone.id);
   assert.equal((await as("admin", "DELETE", `/api/users/${gone.id}`)).status, 200);
   assert.equal((await Event.findByPk(event.id)).organizerId, null);
+});
+
+test("un staff puede trabajar en varios eventos y cada organizador solo toca lo suyo", async () => {
+  // El admin lo carga en dos eventos a la vez
+  const multi = await as("admin", "POST", "/api/users", {
+    name: "Doble", email: "doble@test.com", password: "secret123", eventIds: [eventA.id, eventB.id],
+  });
+  assert.equal(multi.status, 201);
+  assert.deepEqual([...multi.body.user.eventIds].sort(), [eventA.id, eventB.id].sort());
+  const multiUser = await User.findByPk(multi.body.user.id);
+  tokens.multi = sign(multiUser);
+  assert.equal((await as("multi", "GET", `/api/checkin/events/${eventA.id}/stats`)).status, 200);
+  assert.equal((await as("multi", "GET", `/api/checkin/events/${eventB.id}/stats`)).status, 200);
+
+  // Cada organizador lo ve en su evento, pero no puede cambiarle la clave ni borrarlo
+  // porque también trabaja en el evento de otro
+  const listA = await as("orgA", "GET", `/api/organizer/events/${eventA.id}/staff`);
+  const row = listA.body.users.find((u) => u.id === multiUser.id);
+  assert.deepEqual(row.eventIds, [eventA.id]); // no se filtran eventos ajenos
+  assert.equal((await as("orgA", "PUT", `/api/organizer/events/${eventA.id}/staff/${multiUser.id}`, { password: "robada12345" })).status, 403);
+  // Sacarlo de su evento sí puede: pierde ese evento y conserva el otro
+  assert.equal((await as("orgA", "DELETE", `/api/organizer/events/${eventA.id}/staff/${multiUser.id}`)).status, 200);
+  assert.ok(await User.findByPk(multiUser.id));
+  assert.equal((await as("multi", "GET", `/api/checkin/events/${eventA.id}/stats`)).status, 403);
+  assert.equal((await as("multi", "GET", `/api/checkin/events/${eventB.id}/stats`)).status, 200);
+  assert.equal(await StaffEvent.count({ where: { userId: multiUser.id } }), 1);
+  // Al sacarlo del último evento se borra el usuario
+  assert.equal((await as("orgB", "DELETE", `/api/organizer/events/${eventB.id}/staff/${multiUser.id}`)).status, 200);
+  assert.equal(await User.count({ where: { id: multiUser.id } }), 0);
+
+  // El organizador puede cargar un staff en otro de SUS eventos, no en uno ajeno
+  const own2 = await newEvent("Segundo de A", (await User.findOne({ where: { email: "orga@test.com" } })).id);
+  const ok = await as("orgA", "POST", `/api/organizer/events/${eventA.id}/staff`, {
+    name: "Rota", email: "rota@test.com", password: "secret123", eventIds: [own2.id],
+  });
+  assert.equal(ok.status, 201);
+  assert.deepEqual([...ok.body.user.eventIds].sort(), [eventA.id, own2.id].sort());
+  const foreign = await as("orgA", "POST", `/api/organizer/events/${eventA.id}/staff`, {
+    name: "Ajeno", email: "ajeno@test.com", password: "secret123", eventIds: [eventB.id],
+  });
+  assert.equal(foreign.status, 403);
+  assert.equal(await User.count({ where: { email: "ajeno@test.com" } }), 0);
+
+  // Borrar un evento libera sus asignaciones
+  await as("admin", "DELETE", `/api/events/${own2.id}`);
+  assert.equal(await StaffEvent.count({ where: { eventId: own2.id } }), 0);
 });

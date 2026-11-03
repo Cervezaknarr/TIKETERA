@@ -10,6 +10,7 @@ const { checkoutLimiter, authLimiter } = require('./middleware/rateLimit');
 const { ensureAdmin } = require('./utils/admin');
 const { backfillSlugs } = require('./utils/slug');
 const Event = require('./models/Event');
+const { migrateStaffEvents } = require('./utils/staffEvents');
 
 // Importar rutas
 const authRoutes = require("./routes/authRoutes");
@@ -147,6 +148,10 @@ const startServer = async () => {
     // Eventos anteriores a las URLs propias: reciben su slug
     const slugged = await backfillSlugs(Event);
     if (slugged) console.log(`Eventos con slug nuevo: ${slugged}`);
+
+    // Staff creado por un organizador (User.eventId) pasa a la tabla de asignaciones
+    const staffMigrated = await migrateStaffEvents();
+    if (staffMigrated) console.log(`Staff migrado a asignaciones por evento: ${staffMigrated}`);
 
     // Crear el primer admin si está configurado ADMIN_EMAIL
     await ensureAdmin();

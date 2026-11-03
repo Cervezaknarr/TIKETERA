@@ -30,8 +30,8 @@ const User = sequelize.define(
       type: DataTypes.ENUM("user", "staff", "organizer", "admin"),
       defaultValue: "user",
     },
-    // Solo para staff creado por un organizador: único evento donde puede escanear.
-    // null = staff general (escanea cualquier evento). Sin clave foránea a propósito
+    // En desuso: el staff se asigna a eventos con StaffEvent (utils/staffEvents.js).
+    // Solo lo lee la migración de arranque que pasa este valor a StaffEvent
     eventId: {
       type: DataTypes.UUID,
       allowNull: true,

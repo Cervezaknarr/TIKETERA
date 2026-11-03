@@ -3,6 +3,7 @@ const Event = require("../models/Event");
 const Lot = require("../models/Lot");
 const User = require("../models/User");
 const Purchase = require("../models/Purchase");
+const StaffEvent = require("../models/StaffEvent");
 const { sequelize } = require("../config/database");
 const { parseLotInput, withLots } = require("../utils/lots");
 
@@ -375,6 +376,7 @@ const deleteEvent = async (req, res) => {
     // Si no hay compras, eliminar el evento con sus lotes
     await sequelize.transaction(async (transaction) => {
       await Lot.destroy({ where: { eventId: event.id }, transaction });
+      await StaffEvent.destroy({ where: { eventId: event.id }, transaction });
       await event.destroy({ transaction });
     });
 

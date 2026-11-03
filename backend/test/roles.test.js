@@ -11,6 +11,7 @@ const jwt = require("jsonwebtoken");
 const app = require("../server");
 const { sequelize } = require("../config/database");
 const User = require("../models/User");
+const StaffEvent = require("../models/StaffEvent");
 const { ensureAdmin } = require("../utils/admin");
 
 let server;
@@ -158,8 +159,16 @@ test("no se venden entradas de eventos cancelados", async () => {
   });
 });
 
-test("el staff puede escanear", async () => {
+test("el staff puede escanear solo donde está asignado", async () => {
   const { body } = await api("GET", "/api/events");
+  const noEvent = await api(
+    "POST",
+    `/api/checkin/events/${body.events[0].id}/sync`,
+    { token: staffToken, body: { deviceId: "puerta", scans: [] } }
+  );
+  assert.equal(noEvent.status, 403);
+  const staffUser = await User.findOne({ where: { email: "puerta@test.com" } });
+  await StaffEvent.create({ userId: staffUser.id, eventId: body.events[0].id });
   const res = await api(
     "POST",
     `/api/checkin/events/${body.events[0].id}/sync`,
@@ -185,25 +194,38 @@ test("solo el admin gestiona usuarios", async () => {
 });
 
 test("el admin crea staff, le cambia la contraseña y lo borra", async () => {
+  const eventId = (await api("GET", "/api/events")).body.events[0].id;
+  // El staff siempre se crea para uno o más eventos: no hay staff general
+  const noEvents = await api("POST", "/api/users", {
+    token: adminToken,
+    body: { name: "Sin evento", email: "sinevento@test.com", password: "clave1234" },
+  });
+  assert.equal(noEvents.status, 400);
+  const badEvent = await api("POST", "/api/users", {
+    token: adminToken,
+    body: { name: "Mal evento", email: "mal@test.com", password: "clave1234", eventIds: ["no-existe"] },
+  });
+  assert.equal(badEvent.status, 400);
   const created = await api("POST", "/api/users", {
     token: adminToken,
     // Aunque mande role admin, siempre se crea como staff
-    body: { name: "Puerta 2", email: " Puerta2@Test.com ", password: "clave1234", role: "admin" },
+    body: { name: "Puerta 2", email: " Puerta2@Test.com ", password: "clave1234", role: "admin", eventIds: [eventId] },
   });
   assert.equal(created.status, 201);
+  assert.deepEqual(created.body.user.eventIds, [eventId]);
   assert.equal(created.body.user.role, "staff");
   assert.equal(created.body.user.email, "puerta2@test.com");
   const { id } = created.body.user;
 
   const dup = await api("POST", "/api/users", {
     token: adminToken,
-    body: { name: "X", email: "puerta2@test.com", password: "clave1234" },
+    body: { name: "X", email: "puerta2@test.com", password: "clave1234", eventIds: [eventId] },
   });
   assert.equal(dup.status, 400);
 
   const short = await api("POST", "/api/users", {
     token: adminToken,
-    body: { name: "X", email: "x@test.com", password: "123" },
+    body: { name: "X", email: "x@test.com", password: "123", eventIds: [eventId] },
   });
   assert.equal(short.status, 400);
 

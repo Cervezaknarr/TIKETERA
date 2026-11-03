@@ -17,6 +17,7 @@ const Lot = require("../models/Lot");
 const Purchase = require("../models/Purchase");
 const Ticket = require("../models/Ticket");
 const Scan = require("../models/Scan");
+const StaffEvent = require("../models/StaffEvent");
 const {
   generateTicketCode,
   normalizeTicketCode,
@@ -89,6 +90,8 @@ before(async () => {
     location: "Salón",
     userId: organizer.id,
   });
+  // El staff solo escanea los eventos donde está asignado
+  await StaffEvent.create({ userId: staffUser.id, eventId: event.id });
   // Con un solo lote no hace falta indicarlo al comprar
   lot = await Lot.create({
     eventId: event.id,

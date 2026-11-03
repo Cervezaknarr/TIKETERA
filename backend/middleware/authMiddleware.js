@@ -1,6 +1,7 @@
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const Event = require("../models/Event");
+const { isAssigned } = require("../utils/staffEvents");
 require("dotenv").config();
 
 // Los tokens anteriores a tokenVersion no traen `v`: valen como versión 0
@@ -107,13 +108,13 @@ const forbidden = (res) =>
   });
 
 /**
- * ¿Puede este usuario escanear entradas del evento? El admin y el staff general sí;
- * el organizador solo en sus eventos y el staff de un organizador, solo en el suyo
+ * ¿Puede este usuario escanear entradas del evento? El admin sí en todos; el
+ * organizador solo en sus eventos y el staff solo en los que tiene asignados
  */
-const canScanEvent = (user, event) => {
+const canScanEvent = async (user, event) => {
   if (user.role === "admin") return true;
   if (user.role === "organizer") return event.organizerId === user.id;
-  if (user.role === "staff") return !user.eventId || user.eventId === event.id;
+  if (user.role === "staff") return isAssigned(user.id, event.id);
   return false;
 };
 
@@ -128,7 +129,7 @@ const scanAccess = async (req, res, next) => {
     if (!event) {
       return res.status(404).json({ success: false, message: "Evento no encontrado" });
     }
-    if (!canScanEvent(req.user, event)) return forbidden(res);
+    if (!(await canScanEvent(req.user, event))) return forbidden(res);
     req.managedEvent = event;
     next();
   } catch (error) {

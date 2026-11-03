@@ -185,7 +185,7 @@ async function viewStaff(eventId) {
   <h2>Staff · ${esc(event.title)}</h2>
   <div class="card" style="margin-bottom:14px">
     <h3>Agregar staff</h3>
-    <p class="muted">Entra a <b>${esc(location.origin)}/staff</b> con su email y contraseña y solo puede escanear las entradas de <b>este evento</b>.</p>
+    <p class="muted">Entra a <b>${esc(location.origin)}/staff</b> con su email y contraseña y solo puede escanear las entradas de <b>este evento</b>${myEvents.length > 1 ? ' y de los otros que marques abajo' : ''}.</p>
     <form onsubmit="submitStaff(event, '${eventId}')">
       <div class="row">
         <div><label>Nombre</label><input id="uName" required placeholder="Puerta 1"></div>
@@ -193,6 +193,9 @@ async function viewStaff(eventId) {
       </div>
       <label>Contraseña (mínimo 8 caracteres)</label>
       <input id="uPass" type="text" required minlength="8" autocomplete="new-password">
+      ${myEvents.length > 1 ? `<label>También en estos eventos</label>
+      <div class="card" style="max-height:160px;overflow:auto;padding:8px 12px">${myEvents.filter(e => e.id !== eventId).map(e => `
+        <label style="display:block;font-weight:normal"><input type="checkbox" name="uEv" value="${e.id}"> ${esc(e.title)}</label>`).join('')}</div>` : ''}
       <p><button>Agregar</button></p>
     </form>
   </div>
@@ -202,10 +205,10 @@ async function viewStaff(eventId) {
       <tbody>${users.map(u => `
         <tr>
           <td><b>${esc(u.name)}</b></td>
-          <td class="muted">${esc(u.email)}</td>
+          <td class="muted">${esc(u.email)}${u.eventIds.length > 1 ? `<br><small>También en: ${esc(u.eventIds.filter(id => id !== eventId).map(id => (eventById(id) || { title: 'otro evento' }).title).join(', '))}</small>` : ''}</td>
           <td style="white-space:nowrap">
             <button class="ghost" onclick="resetStaffPassword('${eventId}', '${u.id}', this.dataset.name)" data-name="${esc(u.name)}">Cambiar contraseña</button>
-            <button class="ghost danger" onclick="deleteStaff('${eventId}', '${u.id}', this.dataset.name)" data-name="${esc(u.name)}">Borrar</button>
+            <button class="ghost danger" onclick="deleteStaff('${eventId}', '${u.id}', this.dataset.name)" data-name="${esc(u.name)}">${u.eventIds.length > 1 ? 'Quitar del evento' : 'Borrar'}</button>
           </td>
         </tr>`).join('')}
       </tbody></table>` : '<p class="muted">Todavía no creaste staff para este evento.</p>'}
@@ -216,7 +219,7 @@ async function viewStaff(eventId) {
 async function submitStaff(ev, eventId) {
   ev.preventDefault();
   try {
-    await api(`/organizer/events/${eventId}/staff`, { method: 'POST', auth: true, body: { name: $('uName').value, email: $('uEmail').value, password: $('uPass').value } });
+    await api(`/organizer/events/${eventId}/staff`, { method: 'POST', auth: true, body: { name: $('uName').value, email: $('uEmail').value, password: $('uPass').value, eventIds: [...document.querySelectorAll('input[name=uEv]:checked')].map(i => i.value) } });
     await viewStaff(eventId);
     flash('Staff agregado. Pasale el email y la contraseña por un medio privado.');
   } catch (err) { flash(err.message, 'err'); }
@@ -230,7 +233,7 @@ async function resetStaffPassword(eventId, id, name) {
   } catch (err) { flash(err.message, 'err'); }
 }
 async function deleteStaff(eventId, id, name) {
-  if (!confirm(`¿Borrar a ${name}? Deja de poder ingresar en el acto.`)) return;
+  if (!confirm(`¿Sacar a ${name} de este evento? Si no trabaja en otro, se borra y deja de poder ingresar en el acto.`)) return;
   try {
     await api(`/organizer/events/${eventId}/staff/${id}`, { method: 'DELETE', auth: true });
     await viewStaff(eventId);

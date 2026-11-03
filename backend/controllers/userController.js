@@ -1,18 +1,21 @@
 const { UniqueConstraintError, ValidationError } = require("sequelize");
 const User = require("../models/User");
 const Event = require("../models/Event");
+const StaffEvent = require("../models/StaffEvent");
+const { assignmentsByUser, parseEventIds, setAssignments } = require("../utils/staffEvents");
 
 const MIN_PASSWORD_LENGTH = 8;
 
 /**
  * Formato de usuario que se devuelve (nunca la contraseña)
  */
-const serializeUser = (user) => ({
+// `eventIds`: eventos asignados (solo staff; el organizador tiene los suyos en Event.organizerId)
+const serializeUser = (user, eventIds) => ({
   id: user.id,
   name: user.name,
   email: user.email,
   role: user.role,
-  eventId: user.eventId || null,
+  eventIds: user.role === "staff" ? eventIds || [] : undefined,
   createdAt: user.createdAt,
 });
 
@@ -43,7 +46,8 @@ const getUsers = async (req, res) => {
         ["name", "ASC"],
       ],
     });
-    res.json({ success: true, users: users.map(serializeUser) });
+    const assigned = await assignmentsByUser(users.filter((u) => u.role === "staff").map((u) => u.id));
+    res.json({ success: true, users: users.map((u) => serializeUser(u, assigned[u.id])) });
   } catch (error) {
     console.error(error);
     res.status(500).json({
@@ -58,7 +62,9 @@ const getUsers = async (req, res) => {
  * @desc    Crear un usuario staff (control de acceso) u organizador de eventos
  * @route   POST /api/users
  * @access  Admin
- * @body    { name, email, password, role?: "organizer" }  (sin rol, o con otro, se crea staff)
+ * @body    { name, email, password, role?: "organizer", eventIds }  (sin rol, o con otro, se
+ *          crea staff). El staff exige `eventIds`: los eventos donde trabaja (uno o varios);
+ *          no hay staff general. El organizador recibe sus eventos desde el formulario del evento
  */
 const createStaffUser = async (req, res) => {
   try {
@@ -80,14 +86,22 @@ const createStaffUser = async (req, res) => {
       });
     }
 
+    let eventIds = [];
+    if (role === "staff") {
+      const parsed = await parseEventIds(req.body.eventIds);
+      if (parsed.error) return res.status(400).json({ success: false, message: parsed.error });
+      eventIds = parsed.ids;
+    }
+
     const user = await User.create({
       name: String(name).trim(),
       email: String(email).trim().toLowerCase(),
       password,
       role,
     });
+    if (role === "staff") await setAssignments(user.id, eventIds);
 
-    res.status(201).json({ success: true, user: serializeUser(user) });
+    res.status(201).json({ success: true, user: serializeUser(user, eventIds) });
   } catch (error) {
     if (error instanceof UniqueConstraintError) {
       return res.status(400).json({
@@ -111,10 +125,11 @@ const createStaffUser = async (req, res) => {
 };
 
 /**
- * @desc    Modificar un usuario staff (nombre o contraseña)
+ * @desc    Modificar un usuario staff u organizador (nombre, contraseña y, en el staff,
+ *          los eventos donde trabaja)
  * @route   PUT /api/users/:id
  * @access  Admin
- * @body    { name?, password? }
+ * @body    { name?, password?, eventIds? }
  */
 const updateStaffUser = async (req, res) => {
   try {
@@ -135,11 +150,22 @@ const updateStaffUser = async (req, res) => {
       });
     }
 
+    let eventIds;
+    if (req.body.eventIds !== undefined && user.role === "staff") {
+      const parsed = await parseEventIds(req.body.eventIds);
+      if (parsed.error) return res.status(400).json({ success: false, message: parsed.error });
+      eventIds = parsed.ids;
+    }
+
     if (name) user.name = String(name).trim();
     if (password) user.password = password; // Se hashea en el hook beforeUpdate
     await user.save();
+    if (eventIds) await setAssignments(user.id, eventIds);
+    if (!eventIds && user.role === "staff") {
+      eventIds = (await assignmentsByUser([user.id]))[user.id];
+    }
 
-    res.json({ success: true, user: serializeUser(user) });
+    res.json({ success: true, user: serializeUser(user, eventIds) });
   } catch (error) {
     console.error(error);
     res.status(500).json({
@@ -173,6 +199,7 @@ const deleteStaffUser = async (req, res) => {
 
     // Los escaneos guardan staffUserId como dato de auditoría, sin clave
     // foránea, así que el historial de ingresos no se pierde
+    await StaffEvent.destroy({ where: { userId: user.id } });
     await user.destroy();
 
     res.json({ success: true, message: "Usuario eliminado" });

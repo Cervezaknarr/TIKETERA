@@ -3,6 +3,12 @@ const Event = require("../models/Event");
 const Purchase = require("../models/Purchase");
 const PaymentAccount = require("../models/PaymentAccount");
 const User = require("../models/User");
+const StaffEvent = require("../models/StaffEvent");
+const {
+  assignmentsByUser,
+  parseEventIds,
+  setAssignments,
+} = require("../utils/staffEvents");
 const { withLots } = require("../utils/lots");
 const { present } = require("./paymentAccountController");
 const { MIN_PASSWORD_LENGTH } = require("./userController");
@@ -20,13 +26,22 @@ const serverError = (res, error, message) => {
   });
 };
 
-const presentStaff = (user) => ({
+// `eventIds`: eventos del staff que quien consulta administra (no se filtran los ajenos)
+const presentStaff = (user, eventIds) => ({
   id: user.id,
   name: user.name,
   email: user.email,
-  eventId: user.eventId,
+  eventIds,
   createdAt: user.createdAt,
 });
+
+/** Eventos que el usuario administra: todos (null) para el admin, los suyos para el organizador */
+const managedIds = async (user) => {
+  if (user.role === "admin") return null;
+  return (await Event.findAll({ where: { organizerId: user.id }, attributes: ["id"] })).map((e) => e.id);
+};
+
+const onlyManaged = (ids, managed) => (managed ? ids.filter((id) => managed.includes(id)) : ids);
 
 /**
  * @desc    Eventos del organizador (el admin ve todos)
@@ -49,30 +64,54 @@ const getMyEvents = async (req, res) => {
 
 // ---------- Staff del evento ----------
 
-// Solo el staff de ESTE evento: nunca el general ni el de otro organizador
-const findEventStaff = (event, id) =>
-  User.findOne({ where: { id, role: "staff", eventId: event.id } });
+// Solo el staff asignado a ESTE evento: nunca el de otros eventos
+const findEventStaff = async (event, id) => {
+  const assigned = await StaffEvent.findOne({ where: { userId: id, eventId: event.id } });
+  return assigned ? User.findOne({ where: { id, role: "staff" } }) : null;
+};
 
 /**
- * @desc    Staff creado para el evento (solo puede escanear ahí)
+ * El organizador solo toca el staff cuyos eventos son todos suyos: si además trabaja en
+ * un evento de otro organizador, nombre, contraseña y baja los maneja el admin
+ * @returns {Promise<string[]|null>} ids asignados, o null si no puede gestionarlo
+ */
+const manageableAssignments = async (user, staffUser) => {
+  const ids = (await assignmentsByUser([staffUser.id]))[staffUser.id] || [];
+  const managed = await managedIds(user);
+  if (managed && ids.some((id) => !managed.includes(id))) return null;
+  return ids;
+};
+
+const SHARED_STAFF_MESSAGE =
+  "Este staff también trabaja en eventos de otro organizador: pedile al administrador el cambio";
+
+/**
+ * @desc    Staff asignado al evento (solo puede escanear en sus eventos)
  * @route   GET /api/organizer/events/:eventId/staff
  */
 const getStaff = async (req, res) => {
   try {
+    const rows = await StaffEvent.findAll({ where: { eventId: req.managedEvent.id } });
     const users = await User.findAll({
-      where: { role: "staff", eventId: req.managedEvent.id },
+      where: { id: rows.map((r) => r.userId), role: "staff" },
       order: [["name", "ASC"]],
     });
-    res.json({ success: true, users: users.map(presentStaff) });
+    const assigned = await assignmentsByUser(users.map((u) => u.id));
+    const managed = await managedIds(req.user);
+    res.json({
+      success: true,
+      users: users.map((u) => presentStaff(u, onlyManaged(assigned[u.id] || [], managed))),
+    });
   } catch (error) {
     serverError(res, error, "Error al obtener el staff");
   }
 };
 
 /**
- * @desc    Crear un staff para el evento
+ * @desc    Crear un staff para el evento. Con `eventIds` también queda asignado a otros
+ *          eventos del organizador (el staff se repite entre sus eventos)
  * @route   POST /api/organizer/events/:eventId/staff
- * @body    { name, email, password }
+ * @body    { name, email, password, eventIds? }
  */
 const createStaff = async (req, res) => {
   try {
@@ -90,14 +129,21 @@ const createStaff = async (req, res) => {
       });
     }
 
+    const managed = await managedIds(req.user);
+    const requested = Array.isArray(req.body.eventIds) ? req.body.eventIds : [];
+    const parsed = await parseEventIds([req.managedEvent.id, ...requested], { allowed: managed || undefined });
+    if (parsed.error) {
+      return res.status(parsed.forbidden ? 403 : 400).json({ success: false, message: parsed.error });
+    }
+
     const user = await User.create({
       name: String(name).trim(),
       email: String(email).trim().toLowerCase(),
       password,
       role: "staff",
-      eventId: req.managedEvent.id,
     });
-    res.status(201).json({ success: true, user: presentStaff(user) });
+    await setAssignments(user.id, parsed.ids);
+    res.status(201).json({ success: true, user: presentStaff(user, parsed.ids) });
   } catch (error) {
     if (error instanceof UniqueConstraintError) {
       return res.status(400).json({ success: false, message: "Ya existe un usuario con ese email" });
@@ -110,13 +156,16 @@ const createStaff = async (req, res) => {
 };
 
 /**
- * @desc    Cambiar nombre o contraseña de un staff del evento
+ * @desc    Cambiar nombre, contraseña o eventos de un staff del evento
  * @route   PUT /api/organizer/events/:eventId/staff/:id
+ * @body    { name?, password?, eventIds? }  eventIds = eventos del organizador donde trabaja
  */
 const updateStaff = async (req, res) => {
   try {
     const user = await findEventStaff(req.managedEvent, req.params.id);
     if (!user) return res.status(404).json({ success: false, message: "Staff no encontrado" });
+    const current = await manageableAssignments(req.user, user);
+    if (!current) return res.status(403).json({ success: false, message: SHARED_STAFF_MESSAGE });
 
     const { name, password } = req.body;
     if (password !== undefined && (typeof password !== "string" || password.length < MIN_PASSWORD_LENGTH)) {
@@ -125,25 +174,39 @@ const updateStaff = async (req, res) => {
         message: `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres`,
       });
     }
+    let eventIds = current;
+    if (req.body.eventIds !== undefined) {
+      const managed = await managedIds(req.user);
+      const parsed = await parseEventIds(req.body.eventIds, { allowed: managed || undefined });
+      if (parsed.error) {
+        return res.status(parsed.forbidden ? 403 : 400).json({ success: false, message: parsed.error });
+      }
+      eventIds = parsed.ids;
+    }
     if (name) user.name = String(name).trim();
     if (password) user.password = password; // Se hashea en el hook beforeUpdate
     await user.save();
-    res.json({ success: true, user: presentStaff(user) });
+    if (req.body.eventIds !== undefined) await setAssignments(user.id, eventIds);
+    res.json({ success: true, user: presentStaff(user, eventIds) });
   } catch (error) {
     serverError(res, error, "Error al modificar el staff");
   }
 };
 
 /**
- * @desc    Borrar un staff del evento (su sesión deja de funcionar en el acto)
+ * @desc    Sacar un staff del evento. Si no le quedan eventos se borra el usuario (su
+ *          sesión deja de funcionar en el acto); si trabaja en otros, solo pierde este
  * @route   DELETE /api/organizer/events/:eventId/staff/:id
  */
 const deleteStaff = async (req, res) => {
   try {
     const user = await findEventStaff(req.managedEvent, req.params.id);
     if (!user) return res.status(404).json({ success: false, message: "Staff no encontrado" });
-    await user.destroy();
-    res.json({ success: true, message: "Staff eliminado" });
+
+    await StaffEvent.destroy({ where: { userId: user.id, eventId: req.managedEvent.id } });
+    const left = await StaffEvent.count({ where: { userId: user.id } });
+    if (!left) await user.destroy();
+    res.json({ success: true, message: left ? "Staff quitado del evento" : "Staff eliminado" });
   } catch (error) {
     serverError(res, error, "Error al eliminar el staff");
   }

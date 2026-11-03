@@ -5,6 +5,7 @@ const Ticket = require("../models/Ticket");
 const Scan = require("../models/Scan");
 const { sequelize } = require("../config/database");
 const { normalizeTicketCode } = require("../utils/ticketCode");
+const { eventIdsOfStaff } = require("../utils/staffEvents");
 
 // Máximo de escaneos por request (un dispositivo offline puede acumular muchos)
 const MAX_SCANS_PER_SYNC = 500;
@@ -264,9 +265,8 @@ const getCheckinStats = async (req, res) => {
 };
 
 /**
- * @desc    Eventos publicados donde quien consulta puede escanear: todos para el admin y
- *          el staff general; los suyos para el organizador; uno solo para el staff de
- *          un organizador
+ * @desc    Eventos publicados donde quien consulta puede escanear: todos para el admin;
+ *          los suyos para el organizador; los asignados para el staff
  * @route   GET /api/checkin/my-events
  * @access  Staff/Organizador/Admin
  */
@@ -274,7 +274,7 @@ const getMyEvents = async (req, res) => {
   try {
     const where = { status: "published" };
     if (req.user.role === "organizer") where.organizerId = req.user.id;
-    else if (req.user.role === "staff" && req.user.eventId) where.id = req.user.eventId;
+    else if (req.user.role === "staff") where.id = await eventIdsOfStaff(req.user.id);
 
     const events = await Event.findAll({
       where,

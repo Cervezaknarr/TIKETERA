@@ -546,13 +546,18 @@ async function deleteAccount(id, name) {
 // ---------- Usuarios staff ----------
 async function viewUsers() {
   $('view').innerHTML = '<p class="muted">Cargando…</p>';
-  let users;
-  try { ({ users } = await api('/users', { auth: true })); } catch (err) { $('view').innerHTML = ''; return flash(err.message, 'err'); }
+  let users, events;
+  try {
+    ({ users } = await api('/users', { auth: true }));
+    ({ events } = await api('/events?limit=100', { auth: true }));
+  } catch (err) { $('view').innerHTML = ''; return flash(err.message, 'err'); }
+  userEvents = events;
+  const eventName = (id) => (events.find(e => e.id === id) || { title: 'evento borrado' }).title;
   $('view').innerHTML = `
   <h2>Personal</h2>
   <div class="card" style="margin-bottom:14px">
     <h3>Agregar usuario</h3>
-    <p class="muted"><b>Staff</b>: entra a <b>${esc(location.origin)}/staff</b> y escanea entradas de cualquier evento.<br>
+    <p class="muted"><b>Staff</b>: entra a <b>${esc(location.origin)}/staff</b> y escanea solo las entradas de los eventos que marques abajo (uno o varios).<br>
       <b>Organizador</b>: entra a <b>${esc(location.origin)}/organizador</b> y maneja solo los eventos que le asignes al crearlos o editarlos.</p>
     <form onsubmit="submitUser(event)">
       <div class="row">
@@ -560,7 +565,11 @@ async function viewUsers() {
         <div><label>Email</label><input id="uEmail" type="email" required></div>
       </div>
       <label>Rol</label>
-      <select id="uRole"><option value="staff">Staff</option><option value="organizer">Organizador</option></select>
+      <select id="uRole" onchange="$('uEvents').style.display = this.value === 'staff' ? '' : 'none'"><option value="staff">Staff</option><option value="organizer">Organizador</option></select>
+      <div id="uEvents">
+        <label>Eventos del staff</label>
+        ${events.length ? eventChecks('uEv', events, []) : '<p class="muted">Primero creá un evento.</p>'}
+      </div>
       <label>Contraseña (mínimo 8 caracteres)</label>
       <input id="uPass" type="text" required minlength="8" autocomplete="new-password">
       <p><button>Agregar</button></p>
@@ -568,13 +577,15 @@ async function viewUsers() {
   </div>
   <div class="card table-wrap">
     <table>
-      <thead><tr><th>Nombre</th><th>Email</th><th>Rol</th><th></th></tr></thead>
+      <thead><tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Eventos</th><th></th></tr></thead>
       <tbody>${users.map(u => `
         <tr>
           <td><b>${esc(u.name)}</b></td>
           <td class="muted">${esc(u.email)}</td>
-          <td><span class="tag">${{ admin: 'Admin', organizer: 'Organizador' }[u.role] || (u.eventId ? 'Staff de evento' : 'Staff')}</span></td>
+          <td><span class="tag">${{ admin: 'Admin', organizer: 'Organizador' }[u.role] || 'Staff'}</span></td>
+          <td class="muted">${u.role === 'staff' ? (u.eventIds.length ? u.eventIds.map(id => esc(eventName(id))).join(', ') : '<b>Sin eventos: no puede escanear</b>') : u.role === 'organizer' ? esc(events.filter(e => e.organizerId === u.id).map(e => e.title).join(', ') || 'Sin eventos asignados') : 'Todos'}</td>
           <td style="white-space:nowrap">${u.role !== 'admin' ? `
+            ${u.role === 'staff' ? `<button class="ghost" onclick="editStaffEvents('${u.id}')">Eventos</button>` : ''}
             <button class="ghost" onclick="resetPassword('${u.id}', this.dataset.name)" data-name="${esc(u.name)}">Cambiar contraseña</button>
             <button class="ghost danger" onclick="deleteUser('${u.id}', this.dataset.name)" data-name="${esc(u.name)}">Borrar</button>` : ''}</td>
         </tr>`).join('')}
@@ -583,13 +594,49 @@ async function viewUsers() {
   </div>`;
 }
 
+let userEvents = [];
+
+// Casillas de eventos (staff en varios eventos)
+function eventChecks(prefix, events, selected) {
+  return `<div class="card" style="max-height:180px;overflow:auto;padding:8px 12px">${events.map(e => `
+    <label style="display:block;font-weight:normal"><input type="checkbox" name="${prefix}" value="${e.id}" ${selected.includes(e.id) ? 'checked' : ''}> ${esc(e.title)}</label>`).join('')}</div>`;
+}
+const checkedEvents = (prefix) => [...document.querySelectorAll(`input[name="${prefix}"]:checked`)].map(i => i.value);
+
 async function submitUser(ev) {
   ev.preventDefault();
+  const role = $('uRole').value;
+  const eventIds = checkedEvents('uEv');
+  if (role === 'staff' && !eventIds.length) return flash('Marcá al menos un evento para el staff', 'err');
   try {
-    await api('/users', { method: 'POST', auth: true, body: { name: $('uName').value, email: $('uEmail').value, password: $('uPass').value, role: $('uRole').value } });
+    await api('/users', { method: 'POST', auth: true, body: { name: $('uName').value, email: $('uEmail').value, password: $('uPass').value, role, eventIds } });
     await viewUsers();
     flash('Usuario agregado. Pasale el email y la contraseña por un medio privado.');
   } catch (err) { flash(err.message, 'err'); }
+}
+
+// Cambiar en qué eventos trabaja un staff
+async function editStaffEvents(id) {
+  const { users } = await api('/users', { auth: true });
+  const user = users.find(u => u.id === id);
+  const box = document.createElement('div');
+  box.className = 'card';
+  box.style.margin = '14px 0';
+  box.innerHTML = `<h3>Eventos de ${esc(user.name)}</h3>
+    ${eventChecks('eEv', userEvents, user.eventIds)}
+    <p><button id="saveEv">Guardar</button> <button class="ghost" id="cancelEv">Cancelar</button></p>`;
+  $('view').prepend(box);
+  box.scrollIntoView();
+  $('cancelEv').onclick = () => box.remove();
+  $('saveEv').onclick = async () => {
+    const eventIds = checkedEvents('eEv');
+    if (!eventIds.length) return flash('Marcá al menos un evento (o borrá al staff)', 'err');
+    try {
+      await api('/users/' + id, { method: 'PUT', auth: true, body: { eventIds } });
+      await viewUsers();
+      flash('Eventos actualizados');
+    } catch (err) { flash(err.message, 'err'); }
+  };
 }
 
 async function resetPassword(id, name) {
