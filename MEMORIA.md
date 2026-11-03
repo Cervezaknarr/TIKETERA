@@ -49,6 +49,12 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 ### SSL configurable para Postgres local (2026-11-02, misma rama) [SEGURIDAD]
 - `DB_SSL=false` conecta sin SSL a un Postgres local. Sin definir sigue con SSL, y con `NODE_ENV=production` se ignora: siempre va con SSL.
 - Ya estaba así y no se cambió: `rejectUnauthorized: false`, la conexión va cifrada pero no verifica el certificado del servidor.
+### Cabeceras de seguridad y sesiones (2026-11-03, rama `seguridad-cabeceras-sesion`, sin mergear) [SEGURIDAD]
+- `helmet` con CSP en `server.js`. Lleva `'unsafe-inline'` porque el frontend usa scripts y `onclick` en línea: limita a dónde se envían datos por `fetch`, formularios y marcos, pero no frena un XSS por sí sola. Las imágenes admiten cualquier `https:` porque la portada puede ser una URL externa. Sacar `'unsafe-inline'` exige pasar todo el JS en línea a archivos.
+- Sesión de 3 días (`JWT_EXPIRES_IN`), antes 30. Cambiar la contraseña sube `User.tokenVersion` y corta las sesiones abiertas.
+- Los tokens emitidos antes de este cambio siguen valiendo hasta su vencimiento (30 días) salvo que se cambie la contraseña; para cortarlos todos, rotar `JWT_SECRET`.
+- `npm audit fix` subió `body-parser`. Quedan sin arreglo `uuid` y `sequelize` (moderadas): el arreglo automático es incompatible.
+- **Al desplegar:** agrega la columna `User.tokenVersion`: NO tener `DB_SYNC_ALTER=false`.
 
 ## Decisiones tomadas
 - **Pasarela elegida: Mercado Pago.** Nave exige CUIT y el usuario no tiene. Nave queda implementado por si se consigue.

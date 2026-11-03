@@ -2,6 +2,9 @@ const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 require("dotenv").config();
 
+// Los tokens anteriores a tokenVersion no traen `v`: valen como versión 0
+const isCurrentToken = (decoded, user) => (decoded.v || 0) === user.tokenVersion;
+
 /**
  * Middleware que verifica si el token JWT es válido
  * Si es válido, añade el userId al objeto req
@@ -38,6 +41,14 @@ const protect = async (req, res, next) => {
         return res.status(401).json({
           success: false,
           message: "El usuario perteneciente a este token ya no existe",
+        });
+      }
+
+      // La contraseña cambió después de emitir el token
+      if (!isCurrentToken(decoded, req.user)) {
+        return res.status(401).json({
+          success: false,
+          message: "Token no válido o expirado",
         });
       }
 
@@ -98,7 +109,7 @@ const optionalAdmin = async (req, res, next) => {
     if (header && header.startsWith("Bearer")) {
       const decoded = jwt.verify(header.split(" ")[1], process.env.JWT_SECRET);
       const user = await User.findByPk(decoded.id);
-      req.isAdmin = !!user && user.role === "admin";
+      req.isAdmin = !!user && user.role === "admin" && isCurrentToken(decoded, user);
     }
   } catch (error) {
     // Token inválido o vencido: se trata como visitante
