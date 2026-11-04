@@ -65,7 +65,7 @@ test("el evento recibe un slug único y se consulta por él", async () => {
 test("/e/<slug> sirve el sitio de visitantes", async () => {
   const res = await fetch(`${baseUrl}/e/fiesta-verano`);
   assert.equal(res.status, 200);
-  assert.match(await res.text(), /Kaiser Tikets/);
+  assert.match(await res.text(), /GT Tickets/);
 });
 
 test("los eventos viejos sin slug lo reciben al arrancar", async () => {

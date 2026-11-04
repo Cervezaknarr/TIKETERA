@@ -3,19 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kaiser Tikets</title>
+<title>GT Tickets</title>
 <link rel="stylesheet" href="/styles.css">
 <link rel="stylesheet" href="/event.css">
 </head>
 <body>
 <header>
-  <h1>🎟️ Kaiser Tikets</h1>
+  <h1><svg class="logo" viewBox="0 0 28 28" width="28" height="28" role="img" aria-label="GT"><rect width="28" height="28" rx="8" fill="currentColor"/><text x="14" y="19.2" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="13.5" font-weight="800" letter-spacing="-.5" fill="var(--bg)">GT</text></svg><span>Tickets</span></h1>
   <nav id="nav"><button class="ghost" onclick="go('events')">Eventos</button></nav>
 </header>
 <main>
   <div id="msg"></div>
   <div id="view"></div>
 </main>
+<footer class="site-foot">Desarrollado por <b>Gambetech</b></footer>
 
 <script src="/common.js"></script>
 <script>
@@ -30,33 +31,43 @@ function go(view, arg) {
   ({ events: viewEvents, buy: viewBuy, tickets: viewTickets }[view])(arg);
 }
 const eventSlug = (location.pathname.match(/^\/e\/([^/]+)/) || [])[1];
-if (eventSlug) { // la URL de un evento tiene su propio diseño y no lleva al listado
-  document.body.classList.add('ev');
-  $('nav').style.display = 'none';
-}
+document.body.classList.add('ev');
+$('nav').style.display = 'none'; // el listado es la portada: no hace falta un botón para volver a él
 
 // Fecha de un evento, igual en el listado, la compra y "Mis entradas" (sin segundos)
 const fmtWhen = d => new Date(d).toLocaleString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
 // ---------- Eventos ----------
+// Tarjeta del listado: portada (o la fecha como póster), título, fecha y lugar, y desde qué precio
+function eventCard(e) {
+  const free = e.lots.filter(l => l.ticketsAvailable > 0).map(l => Number(l.price));
+  const soldOut = !free.length;
+  const min = Math.min(...free);
+  const price = soldOut ? '' : (free.some(p => p !== min) ? 'Desde ' : '') + money(min);
+  const d = new Date(e.date);
+  const when = d.toLocaleString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' }) + ' · ' +
+    d.toLocaleString('es-AR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) + ' hs';
+  return `<a class="ev-card" href="/e/${esc(e.slug || e.id)}">
+    <div class="ev-hero ${e.imageUrl ? '' : 'no-cover'}">${e.imageUrl ? `<img src="${esc(e.imageUrl)}" alt="Portada de ${esc(e.title)}" loading="lazy">` : datePoster(e.date)}</div>
+    <div class="ev-card-body">
+      <h3 class="ev-card-title">${esc(e.title)}${ageOf(e) ? ` <span class="ev-age">+${ageOf(e)}</span>` : ''}</h3>
+      <p class="ev-card-meta">${esc(when)}<br>${esc(e.location)}</p>
+      <div class="ev-card-foot">
+        <span class="ev-card-price">${soldOut ? '' : esc(price)}</span>
+        <span class="ev-card-cta ${soldOut ? 'off' : ''}">${soldOut ? 'Agotado' : 'Ver entradas'}</span>
+      </div>
+    </div>
+  </a>`;
+}
+
 async function viewEvents() {
   $('view').innerHTML = '<p class="muted">Cargando…</p>';
   try {
     const { events } = await api('/events?limit=100&status=published');
-    $('view').innerHTML = `<h2>Próximos eventos</h2>` + (events.length
-      ? `<div class="grid">${events.map(e => `
-        <div class="card">
-          <h3>${esc(e.title)}${ageOf(e) ? ` <span class="tag">+${ageOf(e)}</span>` : ''}</h3>
-          <div class="muted">📅 ${esc(fmtWhen(e.date))}<br>📍 ${esc(e.location)}</div>
-          <p>${esc(e.description)}</p>
-          <div class="lots">${e.lots.map(l => `
-            <div class="lot ${l.ticketsAvailable < 1 ? 'sold' : ''}">
-              <b>${esc(l.name)}</b>
-              ${l.ticketsAvailable < 1 ? '<span class="tag soldout">Agotada</span>' : `<span class="price" style="margin:0">${money(l.price)}</span>`}
-            </div>`).join('')}</div>
-          <p><button ${e.ticketsAvailable < 1 ? 'disabled' : ''} onclick="location.href='/e/${e.slug || e.id}'">${e.ticketsAvailable < 1 ? 'Agotado' : 'Comprar'}</button></p>
-        </div>`).join('')}</div>`
-      : '<p class="muted">Todavía no hay eventos a la venta.</p>');
+    $('view').innerHTML = events.length
+      ? `<div class="ev-list ${events.length === 1 ? 'one' : ''}"><h2 class="ev-list-title">${events.length === 1 ? 'Próximo evento' : 'Próximos eventos'}</h2>
+        <div class="ev-cards">${events.map(eventCard).join('')}</div></div>`
+      : `<div class="ev-empty"><b>Pronto habrá nuevos eventos</b><span>Todavía no hay entradas a la venta.</span></div>`;
   } catch (err) { $('view').innerHTML = ''; flash(err.message, 'err'); }
 }
 
