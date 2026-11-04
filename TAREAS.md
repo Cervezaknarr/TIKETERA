@@ -266,9 +266,10 @@ _(T1.20: número reservado, sin tarea asignada.)_
 - **Aceptación:** test de configuración por entorno; `test/database.test.js` actualizado; conexión probada contra Postgres local con certificado propio y CA.
 
 ### T2.07 — Sync del escáner sin datos personales [SEGURIDAD]
-- **Agente:** dev-backend · **Hallazgos:** H-07 · **Severidad:** Media · **Dependencias:** cierre de Ola 1 ‖ · **Estado:** pendiente
+- **Agente:** dev-backend · **Hallazgos:** H-07 · **Severidad:** Media · **Dependencias:** cierre de Ola 1 ‖ · **Estado:** hecha parcial, pendiente de aprobación [SEGURIDAD]
 - **Descripción:** `checkinController.js` l. 318-326 y 491-494: el sync devuelve solo código, estado, lote y hashes necesarios para validar sin conexión; sin nombre ni email. El escaneo en línea puede devolver solo el nombre de pila del titular de esa entrada (sin email).
 - **Aceptación:** `checkin.test.js` verifica que ninguna respuesta de `/api/checkin/*` incluye `buyerEmail` y que el sync no incluye `buyerName`.
+- **Nota (otro dev, 2026-11-04):** El sync del escáner ya no envía `buyerEmail` (commit `e4877c1`, `checkin.test.js`). `buyerName` SE MANTIENE por decisión del usuario (el staff lo ve en la puerta para comprobar el DNI): el criterio «el sync no incluye `buyerName`» no se aplica. Falta revisar las demás respuestas de `/api/checkin/*` y T2.08 (el escáner no guarda emails).
 
 ### T2.08 — Escáner adaptado al sync sin PII
 - **Agente:** dev-frontend · **Hallazgos:** H-07 · **Severidad:** Media · **Dependencias:** T2.07, T2.01 · **Estado:** pendiente
@@ -296,9 +297,10 @@ _(T1.20: número reservado, sin tarea asignada.)_
 - **Aceptación:** recorrido manual; la API nunca devuelve el secreto.
 
 ### T2.13 — Límite de pedidos al webhook
-- **Agente:** dev-backend · **Hallazgos:** H-09 · **Severidad:** Media · **Dependencias:** T2.11 (mismo archivo de rutas) · **Estado:** pendiente
+- **Agente:** dev-backend · **Hallazgos:** H-09 · **Severidad:** Media · **Dependencias:** T2.11 (mismo archivo de rutas) · **Estado:** hecha parcial
 - **Descripción:** límite por IP generoso para `/api/purchases/webhook` (p. ej. 300/min, `RATE_LIMIT_WEBHOOK_MAX`, 0 = sin límite) en `middleware/rateLimit.js`; cuerpo máximo chico.
 - **Aceptación:** test de 429 al superar el límite; webhooks normales no se afectan.
+- **Nota (otro dev, 2026-11-04):** Webhook 300/min (`RATE_LIMIT_WEBHOOK_MAX`) y link privado de la compra 120 cada 10 min (`RATE_LIMIT_TICKETS_MAX`), 0 = sin límite; `webhookLimit.test.js` (commit `e4877c1`). Falta el cuerpo máximo chico por ruta (también pendiente en T3.06).
 
 ### T2.14 — Versión de Node fijada
 - **Agente:** devops · **Hallazgos:** I-06 · **Severidad:** Media · **Dependencias:** — ‖ · **Estado:** pendiente
@@ -341,9 +343,10 @@ _(T1.20: número reservado, sin tarea asignada.)_
 - **Aceptación:** `revisor-docs` lo verifica contra el código; base de M-10.
 
 ### T2.22 — `/health` con comprobación de base
-- **Agente:** dev-backend · **Hallazgos:** I-14 · **Severidad:** Baja · **Dependencias:** — ‖ · **Estado:** pendiente
+- **Agente:** dev-backend · **Hallazgos:** I-14 · **Severidad:** Baja · **Dependencias:** — ‖ · **Estado:** hecha
 - **Descripción:** `server.js` l. 93: `SELECT 1` con timeout de 2 s; 200 `{status:"ok"}` o 503 `{status:"degraded"}`; sin `environment` ni versión.
 - **Aceptación:** test con base disponible y simulando caída.
+- **Nota (otro dev, 2026-11-04):** `/health` hace `SELECT 1` con tope de 2 s; 200 `{status:"ok"}` o 503 `{status:"degraded"}`, sin entorno ni versión (commit `e4877c1`). Falta confirmar que hay un test que simule la caída de la base.
 
 ### T2.23 — Tests y verificación de la ola [SEGURIDAD]
 - **Agente:** tester · **Hallazgos:** H-05, H-06, H-07, H-09, I-12, I-14 · **Severidad:** Media · **Dependencias:** T2.01–T2.22 · **Estado:** pendiente
@@ -371,24 +374,28 @@ _(T1.20: número reservado, sin tarea asignada.)_
 - **Aceptación:** recorrido manual; CSV sin tokens.
 
 ### T3.03 — Sin promoción a admin por `ADMIN_EMAIL` [SEGURIDAD]
-- **Agente:** dev-backend · **Hallazgos:** H-12 · **Severidad:** Baja · **Dependencias:** cierre de Ola 2 ‖ · **Estado:** pendiente
+- **Agente:** dev-backend · **Hallazgos:** H-12 · **Severidad:** Baja · **Dependencias:** cierre de Ola 2 ‖ · **Estado:** hecha parcial, pendiente de aprobación [SEGURIDAD]
 - **Descripción:** `utils/admin.js`: crear el admin solo si no existe ningún admin y el email no existe; nunca promover una cuenta existente; registrar en auditoría. Habilita M-05 (borrar `ADMIN_EMAIL`/`ADMIN_PASSWORD`).
 - **Aceptación:** tests: con admin existente no hace nada; con email de un staff no lo promueve.
+- **Nota (otro dev, 2026-11-04):** `ensureAdmin` solo crea el primer admin y nunca asciende cuentas existentes (commit `e4877c1`, test en `roles.test.js`). Falta registrar la creación en el AuditLog. M-05 (borrar `ADMIN_EMAIL`/`ADMIN_PASSWORD` de Render) queda habilitada.
 
 ### T3.04 — API pública sin datos de usuarios [SEGURIDAD]
-- **Agente:** dev-backend · **Hallazgos:** H-13 · **Severidad:** Baja · **Dependencias:** ‖ · **Estado:** pendiente
+- **Agente:** dev-backend · **Hallazgos:** H-13 · **Severidad:** Baja · **Dependencias:** ‖ · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
 - **Descripción:** quitar `userId` y nombre del admin de las respuestas públicas de eventos (`withLots` y relacionados).
 - **Aceptación:** test sobre `GET /api/events` y `GET /api/events/:id` sin esos campos.
+- **Nota (otro dev, 2026-11-04):** La API pública de eventos ya no expone `userId` ni el nombre del admin; el admin sí los ve (commit `e4877c1`, test en `roles.test.js`).
 
 ### T3.05 — Scan acotado por evento [SEGURIDAD]
-- **Agente:** dev-backend · **Hallazgos:** H-14 · **Severidad:** Baja · **Dependencias:** ‖ (no en paralelo con otras tareas sobre `checkinController.js`) · **Estado:** pendiente
+- **Agente:** dev-backend · **Hallazgos:** H-14 · **Severidad:** Baja · **Dependencias:** ‖ (no en paralelo con otras tareas sobre `checkinController.js`) · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
 - **Descripción:** `checkinController.js` l. 333-337: buscar el `Scan` por `id` **y** `eventId`.
 - **Aceptación:** test: un scan de otro evento no se encuentra ni se modifica.
+- **Nota (otro dev, 2026-11-04):** Un escaneo que ya existe en otro evento no se devuelve ni se modifica (resultado `invalid`); test en `checkin.test.js` (commit `e4877c1`). Tras el merge con la auditoría se registra como `CHECKIN_REJECTED`, no como reenvío.
 
 ### T3.06 — Validación de entradas
-- **Agente:** dev-backend · **Hallazgos:** H-15 · **Severidad:** Baja · **Dependencias:** ‖ · **Estado:** pendiente
+- **Agente:** dev-backend · **Hallazgos:** H-15 · **Severidad:** Baja · **Dependencias:** ‖ · **Estado:** hecha parcial
 - **Descripción:** `express.json` de 2 MB solo en alta/edición de evento (100 kB en el resto); `deviceId` ≤ 64; `buyerEmail` con formato y largo ≤ 254; `status` contra lista blanca.
 - **Aceptación:** tests de 413/400 por cada caso.
+- **Nota (otro dev, 2026-11-04):** Hecho: `deviceId` ≤ 64 y `buyerEmail` con formato y ≤ 254 (commit `e4877c1`). Falta el límite de cuerpo JSON por ruta (2 MB solo en eventos, 100 kB en el resto) y la lista blanca de `status`.
 
 ### T3.07 — Fin de `ticketera_api` en localStorage
 - **Agente:** dev-frontend · **Hallazgos:** H-16 · **Severidad:** Baja · **Dependencias:** T2.01 · **Estado:** pendiente
