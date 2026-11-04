@@ -117,6 +117,7 @@ async function viewBuyers(eventId) {
         <option value="all">Todas</option>
         <option value="pending">Pendientes</option>
         <option value="failed">Rechazadas</option>
+        <option value="refunded">Devueltas</option>
       </select>
       <button class="ghost" onclick="exportBuyersCsv()">Exportar CSV</button>
     </div>
@@ -136,7 +137,7 @@ function renderBuyers() {
   const time = (d) => new Date(d).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
   $('bList').innerHTML = list.length ? `
   <div class="table-wrap"><table>
-    <thead><tr><th>Comprador</th><th>Entradas</th><th>Total</th><th>Estado</th><th>Fecha</th></tr></thead>
+    <thead><tr><th>Comprador</th><th>Entradas</th><th>Total</th><th>Estado</th><th>Fecha</th><th></th></tr></thead>
     <tbody>${list.map(p => `
       <tr>
         <td><b>${esc(p.buyerName)}</b><br><span class="muted">${esc(p.buyerEmail)}</span></td>
@@ -144,6 +145,10 @@ function renderBuyers() {
         <td>${money(p.totalPrice)}</td>
         <td><span class="tag ${p.status}">${purchaseStatus[p.status]}</span></td>
         <td class="muted">${new Date(p.createdAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}</td>
+        <td class="actions">${p.status === 'completed' ? `<a href="/#/entradas/${esc(p.accessToken)}" target="_blank" rel="noopener">Ver entradas</a><br>
+          <button class="ghost" onclick="copyPurchaseLink('${esc(p.accessToken)}', this)">Copiar link</button>
+          <button class="ghost" data-email="${esc(p.buyerEmail)}" onclick="resendTicketsEmail('${buyers.event.id}', '${p.id}', this)">Enviar mail</button>
+          <button class="ghost danger" data-name="${esc(p.buyerName)}" onclick="voidPurchaseTickets('${buyers.event.id}', '${p.id}', this)">Anular</button>` : ''}</td>
       </tr>`).join('')}
     </tbody>
   </table></div>

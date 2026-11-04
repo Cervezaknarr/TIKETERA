@@ -298,6 +298,9 @@ test("el webhook de Nave consulta el pago y mapea su estado", async () => {
     ["APPROVED", "approved"],
     ["REJECTED", "pending"], // Nave permite reintentar el pago
     ["CANCELLED", "rejected"],
+    ["REFUNDED", "refunded"],
+    ["CHARGED_BACK", "refunded"],
+    ["PURCHASE_REVERSED", "refunded"],
     ["PENDING", "pending"],
   ];
   for (const [naveStatus, expected] of cases) {
@@ -418,6 +421,8 @@ test("el webhook de Mercado Pago consulta el pago y mapea su estado", async () =
     ["rejected", "pending"], // el comprador puede reintentar con otra tarjeta
     ["in_process", "pending"],
     ["cancelled", "rejected"],
+    ["refunded", "refunded"], // una devolución anula las entradas de una compra paga
+    ["charged_back", "refunded"], // y un contracargo también
   ];
   for (const [mpStatus, expected] of cases) {
     await withMercadoPago(

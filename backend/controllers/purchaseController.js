@@ -29,7 +29,124 @@ const sendPurchaseEmail = async (purchaseId) => {
     where: { purchaseId },
     order: [["createdAt", "ASC"], ["code", "ASC"]],
   });
-  await sendTicketsEmail({ purchase, event: purchase.Event, tickets });
+  return sendTicketsEmail({ purchase, event: purchase.Event, tickets });
+};
+
+/**
+ * Anular una compra ya paga (devolución, contracargo o decisión del panel): la compra
+ * pasa a "refunded" y sus entradas que todavía no se usaron a "void", así el escáner las
+ * rechaza. Las que ya entraron no se tocan. Va dentro de una transacción, con la compra
+ * bloqueada. El update es condicional: si alguien escanea a la vez, o la entrada se
+ * anula o ya entró, nunca las dos
+ * @returns {Promise<{ voided: number, used: number }>}
+ */
+const voidPurchase = async (purchase, transaction) => {
+  purchase.status = "refunded";
+  await purchase.save({ transaction });
+  const [voided] = await Ticket.update(
+    { status: "void" },
+    { where: { purchaseId: purchase.id, status: "valid" }, transaction }
+  );
+  const used = await Ticket.count({ where: { purchaseId: purchase.id, status: "used" }, transaction });
+  return { voided, used };
+};
+
+// Reenvíos recientes por compra: evita que un clic repetido llene la bandeja del comprador
+const RESEND_COOLDOWN_MS = 30 * 1000;
+const lastResend = new Map();
+
+/**
+ * @desc    Anular a mano las entradas de una compra pagada (admin u organizador del
+ *          evento), por ejemplo si se devolvió la plata por fuera. No devuelve el dinero
+ * @route   POST /api/purchases/event/:eventId/:purchaseId/void
+ * @access  Private (admin u organizador del evento)
+ */
+const voidPurchaseFromPanel = async (req, res) => {
+  try {
+    const result = await sequelize.transaction(async (transaction) => {
+      const purchase = await Purchase.findOne({
+        where: { id: req.params.purchaseId, eventId: req.managedEvent.id },
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+      });
+      if (!purchase) return { notFound: true };
+      if (purchase.status !== "completed") return { notPaid: true };
+      return voidPurchase(purchase, transaction);
+    });
+
+    if (result.notFound) {
+      return res.status(404).json({ success: false, message: "Compra no encontrada" });
+    }
+    if (result.notPaid) {
+      return res.status(400).json({
+        success: false,
+        message: "Solo se pueden anular compras pagas que todavía no fueron anuladas",
+      });
+    }
+    res.json({
+      success: true,
+      message:
+        `Compra anulada: ${result.voided} entrada(s) dejaron de ser válidas` +
+        (result.used ? `. ${result.used} ya habían entrado y no se pueden anular` : "") +
+        ". Esto no devuelve el dinero: hacelo desde tu cuenta de pagos",
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Error al anular la compra" });
+  }
+};
+
+/**
+ * @desc    Reenviar por email las entradas de una compra pagada (admin u organizador
+ *          del evento), por ejemplo si el comprador no recibió el mail o se equivocó
+ *          al escribirlo
+ * @route   POST /api/purchases/event/:eventId/:purchaseId/resend
+ * @access  Private (admin u organizador del evento)
+ */
+const resendPurchaseEmail = async (req, res) => {
+  try {
+    const purchase = await Purchase.findOne({
+      where: { id: req.params.purchaseId, eventId: req.managedEvent.id },
+    });
+    if (!purchase) {
+      return res.status(404).json({ success: false, message: "Compra no encontrada" });
+    }
+    if (purchase.status !== "completed") {
+      return res.status(400).json({
+        success: false,
+        message: "La compra todavía no está paga: no tiene entradas para enviar",
+      });
+    }
+    if (Date.now() - (lastResend.get(purchase.id) || 0) < RESEND_COOLDOWN_MS) {
+      return res.status(429).json({
+        success: false,
+        message: "Ya se envió hace un momento. Esperá unos segundos antes de reenviar",
+      });
+    }
+
+    let sent;
+    try {
+      sent = await sendPurchaseEmail(purchase.id);
+    } catch (error) {
+      console.error(`Error al reenviar las entradas de la compra ${purchase.id}:`, error);
+      return res.status(502).json({
+        success: false,
+        message: "No se pudo enviar el email. Probá de nuevo o copiá el link de las entradas",
+      });
+    }
+    if (!sent) {
+      return res.status(503).json({
+        success: false,
+        message: "El envío de emails todavía no está configurado. Copiá el link y mandáselo a mano",
+      });
+    }
+
+    lastResend.set(purchase.id, Date.now());
+    res.json({ success: true, message: `Entradas enviadas a ${purchase.buyerEmail}` });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Error al reenviar las entradas" });
+  }
 };
 
 // "2× General, 3× VIP" para mostrar en listados y emails (la columna guarda 60 caracteres)
@@ -374,6 +491,14 @@ const handlePaymentWebhook = async (req, res) => {
       // Pago aprobado que llega después de que la compra venció y se liberó su
       // cupo (por ejemplo, un pago en efectivo): se intenta reservar de nuevo
       const lateApproval = status === "approved" && purchase.status === "failed";
+      if (status === "refunded" && purchase.status === "completed") {
+        const { voided, used } = await voidPurchase(purchase, transaction);
+        console.error(
+          `COMPRA DEVUELTA O CONTRACARGADA: la compra ${purchase.id} (${purchase.buyerEmail}) pasó a "refunded"; ` +
+            `${voided} entrada(s) anulada(s)${used ? `, ${used} ya habían entrado` : ""}`
+        );
+        return "voided";
+      }
       if (purchase.status !== "pending" && !lateApproval) return "already_processed";
 
       if (status === "approved") {
@@ -413,7 +538,7 @@ const handlePaymentWebhook = async (req, res) => {
             console.error(`Error al enviar entradas de la compra ${purchase.id}:`, error)
           );
         });
-      } else if (status === "rejected") {
+      } else if (status === "rejected" || status === "refunded") {
         purchase.status = "failed";
         await purchase.save({ transaction });
 
@@ -611,4 +736,6 @@ module.exports = {
   getSalesStatus,
   getEventPurchases,
   getPurchaseTickets,
+  resendPurchaseEmail,
+  voidPurchaseFromPanel,
 };

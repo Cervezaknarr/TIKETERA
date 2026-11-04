@@ -126,6 +126,14 @@ body.ev {
   background:color-mix(in srgb,var(--accent) 12%,transparent); font-size:var(--fs-s); }
 .ev-clock-time { font-size:var(--fs-l); font-weight:700; font-variant-numeric:tabular-nums; letter-spacing:-.02em; min-width:3.2ch; }
 
+/* Recuperar entradas: aviso de guardar el link y compras de este dispositivo */
+.ev-save { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:12px 0 0; padding:12px 14px; border-radius:14px;
+  background:color-mix(in srgb,var(--accent) 12%,transparent); font-size:var(--fs-s); }
+.ev-save b { color:var(--text); }
+.ev-save button { margin-left:auto; padding:8px 16px; }
+.ev-mine { display:flex; flex-direction:column; gap:6px; margin:0 0 16px; padding:12px 14px; border-radius:14px; background:var(--field); font-size:var(--fs-s); }
+.ev-mine a { color:var(--accent); text-decoration:none; font-weight:600; }
+
 /* Mapa de la ubicación */
 .ev-map { position:relative; margin-top:24px; border-radius:22px; overflow:hidden; box-shadow:var(--shadow); border:1px solid var(--border); background:var(--card); }
 .ev-layout > .ev-map { margin-top:0; }

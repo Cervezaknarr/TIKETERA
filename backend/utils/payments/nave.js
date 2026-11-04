@@ -34,10 +34,10 @@ const STATUS_MAP = {
   PENDING: "pending",
   REJECTED: "pending",
   CANCELLED: "rejected",
-  PURCHASE_REVERSED: "rejected",
-  REFUNDED: "rejected",
+  PURCHASE_REVERSED: "refunded",
+  REFUNDED: "refunded",
   CHARGEBACK_REVIEW: "pending",
-  CHARGED_BACK: "rejected",
+  CHARGED_BACK: "refunded",
 };
 
 const getConfig = () => {

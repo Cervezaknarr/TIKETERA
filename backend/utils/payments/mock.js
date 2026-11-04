@@ -22,7 +22,7 @@ module.exports = {
   async resolveWebhook(req) {
     assertNotProduction();
     const { paymentGatewayId, status } = req.body;
-    if (!paymentGatewayId || !["approved", "rejected", "pending"].includes(status)) {
+    if (!paymentGatewayId || !["approved", "rejected", "pending", "refunded"].includes(status)) {
       return null;
     }
     return { gatewayId: paymentGatewayId, status };

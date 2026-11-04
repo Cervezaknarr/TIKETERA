@@ -399,6 +399,7 @@ async function viewBuyers(eventId) {
         <option value="all">Todas</option>
         <option value="pending">Pendientes</option>
         <option value="failed">Rechazadas</option>
+        <option value="refunded">Devueltas</option>
       </select>
       <button class="ghost" onclick="exportBuyersCsv()">Exportar CSV</button>
     </div>
@@ -428,7 +429,10 @@ function renderBuyers() {
         <td>${money(p.totalPrice)}</td>
         <td><span class="tag ${p.status}">${purchaseStatus[p.status]}</span></td>
         <td class="muted">${new Date(p.createdAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}</td>
-        <td>${p.status === 'completed' ? `<a href="/#/entradas/${esc(p.accessToken)}" target="_blank" rel="noopener">Ver entradas</a>` : ''}</td>
+        <td class="actions">${p.status === 'completed' ? `<a href="/#/entradas/${esc(p.accessToken)}" target="_blank" rel="noopener">Ver entradas</a><br>
+          <button class="ghost" onclick="copyPurchaseLink('${esc(p.accessToken)}', this)">Copiar link</button>
+          <button class="ghost" data-email="${esc(p.buyerEmail)}" onclick="resendTicketsEmail('${buyers.event.id}', '${p.id}', this)">Enviar mail</button>
+          <button class="ghost danger" data-name="${esc(p.buyerName)}" onclick="voidPurchaseTickets('${buyers.event.id}', '${p.id}', this)">Anular</button>` : ''}</td>
       </tr>`).join('')}
     </tbody>
   </table></div>

@@ -180,6 +180,7 @@ async function viewBuy(id) {
       <p class="ev-desc">${esc(e.description)}</p>
     </section>
     <form class="ev-panel" onsubmit="goCheckout(event)">
+      ${minePurchases()}
       <h2>Entradas</h2>
       <div class="ev-lots">${e.lots.map(lotCard).join('')}</div>
       ${packs.length ? `<h3 class="ev-subtitle">Packs con descuento</h3>
@@ -383,6 +384,26 @@ const purchaseItems = p => p.items && p.items.length
   ? ' · ' + p.items.map(i => `${i.quantity}× ${esc(i.lotName)}${i.packSize ? ` (pack x${i.packSize} −${pctText(i.discountPercent)}%)` : ''}`).join(', ')
   : (p.lotName ? ' ' + esc(p.lotName) : '');
 
+// Compras hechas en este navegador: así el comprador vuelve a sus entradas aunque cierre la pestaña
+const MINE_KEY = 'ticketera_compras';
+function savedPurchases() {
+  try { return JSON.parse(localStorage.getItem(MINE_KEY)) || []; } catch { return []; }
+}
+function rememberPurchase(token, event, qty) {
+  try {
+    const list = savedPurchases().filter(p => p.token !== token);
+    list.unshift({ token, slug: eventSlug || '', event: event.title, qty });
+    localStorage.setItem(MINE_KEY, JSON.stringify(list.slice(0, 20)));
+  } catch { /* sin almacenamiento (modo privado): el link sigue en el mail */ }
+}
+// En la página del evento: acceso directo a las compras ya hechas desde este navegador
+function minePurchases() {
+  const mine = savedPurchases().filter(p => p.slug && p.slug === eventSlug);
+  if (!mine.length) return '';
+  return `<div class="ev-mine"><b>Tus compras en este dispositivo</b>${mine.slice(0, 3).map(p =>
+    `<a href="#/entradas/${esc(p.token)}" onclick="go('tickets','${esc(p.token)}');return false">Ver mis ${p.qty} entrada${p.qty > 1 ? 's' : ''}</a>`).join('')}</div>`;
+}
+
 // ---------- Mis entradas (link privado de la compra) ----------
 async function viewTickets(token, tries = 0) {
   history.replaceState(null, '', '#/entradas/' + token);
@@ -396,7 +417,10 @@ async function viewTickets(token, tries = 0) {
         <h2>${esc(event.title)}</h2>
         <p class="muted">📅 ${esc(fmtWhen(event.date))}<br>📍 ${esc(event.location)}</p>
         <p class="muted">${esc(purchase.buyerName)} · ${purchase.quantity} entrada(s)${purchaseItems(purchase)} · ${money(purchase.totalPrice)}</p>
-        ${tickets.length ? '<p class="muted">Cada QR es para una persona. También te llegan por email.</p>'
+        ${purchase.status === 'refunded' ? '<p class="msg err">Esta compra fue devuelta y sus entradas están anuladas.</p>'
+          : tickets.length ? `<p class="muted">Cada QR es para una persona. También te llegan por email.</p>
+          <div class="ev-save"><span><b>Guardá este link</b>: es tu acceso a las entradas. Si cerrás la página, lo necesitás para volver.</span>
+            <button type="button" class="ghost" onclick="copyPurchaseLink('${esc(token)}', this)">Copiar link</button></div>`
           : purchase.status === 'failed' ? '<p class="msg err">El pago no se completó. Volvé al evento para intentarlo de nuevo.</p>'
           : `<p class="muted">Estamos confirmando tu pago… esta página se actualiza sola.</p>
              ${purchase.expiresAt ? `<p class="msg hold" id="hold" data-exp="${esc(purchase.expiresAt)}"></p>` : ''}`}
@@ -409,6 +433,7 @@ async function viewTickets(token, tries = 0) {
       </div>`).join('')}
       <p style="text-align:center"><button class="ghost" onclick="go('events')">${eventSlug ? 'Volver al evento' : 'Volver a eventos'}</button></p>
     </div>`;
+    if (tickets.length) rememberPurchase(token, event, purchase.quantity);
     startHoldTimer();
     // Al volver de la pasarela el aviso del pago puede tardar unos segundos: se reintenta solo
     if (!tickets.length && purchase.status === 'pending' && tries < 20) {

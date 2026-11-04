@@ -29,8 +29,8 @@ const STATUS_MAP = {
   in_mediation: "pending",
   rejected: "pending",
   cancelled: "rejected",
-  refunded: "rejected",
-  charged_back: "rejected",
+  refunded: "refunded",
+  charged_back: "refunded",
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

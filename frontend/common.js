@@ -12,6 +12,48 @@ function flash(text, type = 'ok') {
   if (text) window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
+// Link privado de las entradas de una compra: el mismo que llega por email
+const purchaseLink = (token) => location.origin + '/#/entradas/' + token;
+
+// Copiar el link de las entradas. btn (opcional) muestra "¡Copiado!" un momento
+async function copyPurchaseLink(token, btn) {
+  const url = purchaseLink(token);
+  try {
+    await navigator.clipboard.writeText(url);
+    if (btn) {
+      const text = btn.textContent;
+      btn.textContent = '¡Copiado!';
+      setTimeout(() => { btn.textContent = text; }, 1800);
+    }
+  } catch {
+    // Sin permiso para el portapapeles (por ejemplo en http): se muestra para copiarlo a mano
+    window.prompt('Copiá el link de las entradas:', url);
+  }
+}
+
+// Panel (admin y organizador): reenviar por email las entradas de una compra pagada.
+// El email sale al comprador, así que se pide confirmar antes
+async function resendTicketsEmail(eventId, purchaseId, btn) {
+  if (!confirm('¿Enviar las entradas a ' + btn.dataset.email + '?')) return;
+  btn.disabled = true;
+  try {
+    const { message } = await api('/purchases/event/' + eventId + '/' + purchaseId + '/resend', { method: 'POST', auth: true });
+    flash(message);
+  } catch (err) { flash(err.message, 'err'); }
+  finally { btn.disabled = false; }
+}
+
+// Panel (admin y organizador): anular las entradas de una compra pagada. No devuelve la plata
+async function voidPurchaseTickets(eventId, purchaseId, btn) {
+  if (!confirm('Las entradas de ' + btn.dataset.name + ' dejarán de ser válidas en la puerta. Esto no devuelve el dinero. ¿Anular la compra?')) return;
+  btn.disabled = true;
+  try {
+    const { message } = await api('/purchases/event/' + eventId + '/' + purchaseId + '/void', { method: 'POST', auth: true });
+    await viewBuyers(eventId);
+    flash(message);
+  } catch (err) { btn.disabled = false; flash(err.message, 'err'); }
+}
+
 // Sesión guardada por sitio (staff y admin no se pisan si comparten el navegador).
 // La crea cada página con createSession('staff' | 'admin')
 let session = { token: null, user: null };
