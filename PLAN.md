@@ -146,7 +146,7 @@ reflejar el estado final.
 
 | Despliegue | Contenido | Cambios de esquema | Condiciones |
 |---|---|---|---|
-| D0 | `main` + H-01 + H-04 | Los pendientes de `main` (slug, packs, StaffEvent, organizer, etc.) vía `alter` | Copia de la base; sin ventas; `DB_SYNC_ALTER` ≠ false; ensayo en Postgres local (T1.07); después `DB_SYNC_ALTER=false`. Opcional: H-01 como hotfix desde `prod` si el usuario lo pide. |
+| D0 | `main` + H-01 + H-04 | Solo la tabla `AuditLog` y su trigger de Postgres: `prod` ya incluye el resto de los modelos (slug, packs, StaffEvent, organizer). Con `DB_SYNC_ALTER=false` el arranque crea las tablas que faltan, así que no hace falta activar `alter`. | Copia de la base; momento tranquilo (sin ingreso en puerta ni evento por abrir; no hace falta pausar las ventas, solo evitar compras `pending` recientes); ensayo en Postgres local (T1.07, hecho el 2026-11-04, ver `MEMORIA.md`). Aviso previo por las URLs `/adminGt`, `/staffGt`, `/organizadorGt`. Opcional: H-01 como hotfix desde `prod` si el usuario lo pide. |
 | D1 | Resto de la Ola 1 | Migraciones: baseline (se marca aplicada), dedupe de índices, `AuditLog`, `User` (MFA/bloqueo), `PaymentAccount.collectorId` | Copia de la base; `preDeployCommand: npm run migrate` configurado; el admin tiene una app TOTP a mano (MFA obligatorio al primer login); luego borrar `DB_SYNC_ALTER` de Render. |
 | D2 | Ola 2 | `PaymentAccount.webhookSecretEnc` | Copia de la base; aviso de cierre de sesiones; `PAYMENT_ACCOUNTS_KEY_PREVIOUS` si se rota la clave. |
 | D3 | Ola 3 | Ninguno previsto (si H-17 limpia portadas, migración de datos) | Después: borrar `ADMIN_EMAIL`/`ADMIN_PASSWORD`. |
@@ -234,7 +234,7 @@ describen el comportamiento real del código y la configuración.
 
 | Riesgo | Impacto | Mitigación |
 |---|---|---|
-| D0 lleva a prod muchos cambios de `main` sin desplegar (organizer, StaffEvent, packs) y el enum `organizer` no se probó en Postgres | Arranque roto o pérdida de datos | Ensayo T1.07 en Postgres local con forma de prod; copia previa; sin ventas; rollback = restaurar copia + volver `prod` al commit anterior. |
+| D0 lleva a prod `AuditLog` y su trigger, y el reinicio del servicio puede cortar un pago o el ingreso en puerta. El ensayo en Postgres local (2026-11-04) cubrió la tabla, el trigger y el rollback de la auditoría estricta, pero no Mercado Pago real ni una copia de la base de prod | Arranque roto, compra en vuelo con error o staff sin acceso en la puerta | Copia previa; desplegar en un momento tranquilo y sin evento con ingreso abierto; compra de prueba real tras el deploy; rollback = redeploy del commit anterior de `prod` (la tabla y el trigger quedan, son inofensivos); restaurar la copia solo si hubo daño en datos. |
 | Línea base de migraciones distinta del esquema real de prod | `migrate` falla en el despliegue | La baseline verifica tablas/columnas esperadas y aborta con mensaje claro; se prueba contra un dump de prod post-D0. |
 | El staff general existente queda sin eventos tras D0 (`MEMORIA.md`) | No pueden escanear | Checklist de D0: el admin asigna eventos al staff inmediatamente después. |
 | MFA obligatorio bloquea al admin (pierde el teléfono) | Sin acceso de administración | Códigos de recuperación + procedimiento «break-glass» documentado (script con acceso a la base de Render). |
