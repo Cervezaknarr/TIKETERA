@@ -172,6 +172,9 @@ module.exports = {
       status,
       amount: payment.transaction_amount,
       currency: payment.currency_id,
+      // Cuenta con la que se consultó el pago (UUID validado); el controlador la
+      // compara con la de la compra
+      accountId: acc || null,
     };
   },
 };

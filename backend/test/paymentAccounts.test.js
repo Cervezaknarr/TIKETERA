@@ -299,7 +299,7 @@ test("un pago aprobado por otro monto no emite entradas", async () => {
   console.error = (message) => logged.push(String(message));
   let res;
   try {
-    res = await webhook();
+    res = await webhook(purchase.paymentAccountId);
   } finally {
     console.error = originalError;
   }
@@ -312,7 +312,7 @@ test("un pago aprobado por otro monto no emite entradas", async () => {
 
   // El mismo aviso con el monto correcto sí confirma la compra
   approvedPayment(purchase.id, 2000);
-  assert.equal((await webhook()).status, 200);
+  assert.equal((await webhook(purchase.paymentAccountId)).status, 200);
   assert.equal((await Purchase.findByPk(purchase.id)).status, "completed");
 });
 

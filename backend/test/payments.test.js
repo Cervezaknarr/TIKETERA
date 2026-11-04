@@ -439,7 +439,7 @@ test("el webhook de Mercado Pago consulta el pago y mapea su estado", async () =
           const result = await mp.resolveWebhook(req);
           assert.deepEqual(
             result,
-            { gatewayId: "compra-1", status: expected, amount: 2500, currency: "ARS" },
+            { gatewayId: "compra-1", status: expected, amount: 2500, currency: "ARS", accountId: null },
             mpStatus
           );
           assert.equal(calls[0].url, "https://api.mercadopago.com/v1/payments/123456");

@@ -2,6 +2,7 @@ const { UniqueConstraintError, ValidationError } = require("sequelize");
 const User = require("../models/User");
 const Event = require("../models/Event");
 const StaffEvent = require("../models/StaffEvent");
+const { audit } = require("../utils/audit");
 const { assignmentsByUser, parseEventIds, setAssignments } = require("../utils/staffEvents");
 
 const MIN_PASSWORD_LENGTH = 8;
@@ -100,6 +101,12 @@ const createStaffUser = async (req, res) => {
       role,
     });
     if (role === "staff") await setAssignments(user.id, eventIds);
+    await audit(req, {
+      action: "USER_CREATE",
+      entityType: "User",
+      entityId: user.id,
+      details: { role, ...(role === "staff" ? { eventIds } : {}) },
+    });
 
     res.status(201).json({ success: true, user: serializeUser(user, eventIds) });
   } catch (error) {
@@ -157,10 +164,21 @@ const updateStaffUser = async (req, res) => {
       eventIds = parsed.ids;
     }
 
+    const details = {};
+    if (name && String(name).trim() !== user.name) details.name = { from: user.name, to: String(name).trim() };
+    if (password) details.passwordChanged = true;
+    if (eventIds) {
+      const before = (await assignmentsByUser([user.id]))[user.id] || [];
+      const same = before.length === eventIds.length && eventIds.every((id) => before.includes(id));
+      if (!same) details.eventIds = { from: before, to: eventIds };
+    }
+    // Hoy la API no cambia el rol; si algún día lo hace, registrarlo aquí como { role: {from, to} }
+
     if (name) user.name = String(name).trim();
     if (password) user.password = password; // Se hashea en el hook beforeUpdate
     await user.save();
     if (eventIds) await setAssignments(user.id, eventIds);
+    await audit(req, { action: "USER_UPDATE", entityType: "User", entityId: user.id, details });
     if (!eventIds && user.role === "staff") {
       eventIds = (await assignmentsByUser([user.id]))[user.id];
     }
@@ -201,6 +219,7 @@ const deleteStaffUser = async (req, res) => {
     // foránea, así que el historial de ingresos no se pierde
     await StaffEvent.destroy({ where: { userId: user.id } });
     await user.destroy();
+    await audit(req, { action: "USER_DELETE", entityType: "User", entityId: user.id, details: { role: user.role } });
 
     res.json({ success: true, message: "Usuario eliminado" });
   } catch (error) {

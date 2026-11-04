@@ -10,6 +10,7 @@ const { checkoutLimiter, authLimiter } = require('./middleware/rateLimit');
 const { ensureAdmin } = require('./utils/admin');
 const { backfillSlugs } = require('./utils/slug');
 const Event = require('./models/Event');
+const AuditLog = require('./models/AuditLog');
 const { migrateStaffEvents } = require('./utils/staffEvents');
 
 // Importar rutas
@@ -20,6 +21,7 @@ const checkinRoutes = require("./routes/checkinRoutes");
 const userRoutes = require("./routes/userRoutes");
 const paymentAccountRoutes = require("./routes/paymentAccountRoutes");
 const organizerRoutes = require("./routes/organizerRoutes");
+const auditRoutes = require("./routes/auditRoutes");
 
 // Inicializar Express
 const app = express();
@@ -88,6 +90,7 @@ app.use("/api/checkin", checkinRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/payment-accounts", paymentAccountRoutes);
 app.use("/api/organizer", organizerRoutes);
+app.use("/api/audit", auditRoutes);
 
 // Health check (lo usa el host para saber si el servidor está vivo)
 app.get("/health", (req, res) => {
@@ -140,6 +143,9 @@ const startServer = async () => {
     // DB_SYNC_ALTER=false para que los reinicios solo creen las tablas faltantes
     await sequelize.sync({ alter: process.env.DB_SYNC_ALTER !== "false" });
     console.log("Base de datos sincronizada correctamente");
+
+    // Trigger append-only de AuditLog (solo Postgres; idempotente, va después del sync)
+    await AuditLog.ensureAppendOnlyTrigger();
 
     // Eventos anteriores a los lotes: pasan a tener un lote "General"
     const migrated = await migrateEventsToLots();

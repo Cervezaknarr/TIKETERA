@@ -12,6 +12,7 @@ const {
 const { withLots } = require("../utils/lots");
 const { present } = require("./paymentAccountController");
 const { MIN_PASSWORD_LENGTH } = require("./userController");
+const { audit } = require("../utils/audit");
 
 // Panel del organizador. Todas las rutas con :eventId pasan antes por el middleware
 // eventManager, que deja el evento en req.managedEvent solo si el usuario es el
@@ -143,6 +144,13 @@ const createStaff = async (req, res) => {
       role: "staff",
     });
     await setAssignments(user.id, parsed.ids);
+    await audit(req, {
+      action: "STAFF_CREATE",
+      entityType: "User",
+      entityId: user.id,
+      eventId: req.managedEvent.id,
+      details: { role: "staff", eventIds: parsed.ids },
+    });
     res.status(201).json({ success: true, user: presentStaff(user, parsed.ids) });
   } catch (error) {
     if (error instanceof UniqueConstraintError) {
@@ -183,10 +191,24 @@ const updateStaff = async (req, res) => {
       }
       eventIds = parsed.ids;
     }
+    const details = {};
+    if (name && String(name).trim() !== user.name) details.name = { from: user.name, to: String(name).trim() };
+    if (password) details.passwordChanged = true;
+    if (req.body.eventIds !== undefined) {
+      const same = eventIds.length === current.length && eventIds.every((id) => current.includes(id));
+      if (!same) details.eventIds = { from: current, to: eventIds };
+    }
     if (name) user.name = String(name).trim();
     if (password) user.password = password; // Se hashea en el hook beforeUpdate
     await user.save();
     if (req.body.eventIds !== undefined) await setAssignments(user.id, eventIds);
+    await audit(req, {
+      action: "STAFF_UPDATE",
+      entityType: "User",
+      entityId: user.id,
+      eventId: req.managedEvent.id,
+      details,
+    });
     res.json({ success: true, user: presentStaff(user, eventIds) });
   } catch (error) {
     serverError(res, error, "Error al modificar el staff");
@@ -206,6 +228,13 @@ const deleteStaff = async (req, res) => {
     await StaffEvent.destroy({ where: { userId: user.id, eventId: req.managedEvent.id } });
     const left = await StaffEvent.count({ where: { userId: user.id } });
     if (!left) await user.destroy();
+    await audit(req, {
+      action: "STAFF_DELETE",
+      entityType: "User",
+      entityId: user.id,
+      eventId: req.managedEvent.id,
+      details: { removedFromEvent: true, userDeleted: !left },
+    });
     res.json({ success: true, message: left ? "Staff quitado del evento" : "Staff eliminado" });
   } catch (error) {
     serverError(res, error, "Error al eliminar el staff");
@@ -251,7 +280,15 @@ const setSalesPaused = async (req, res) => {
     if (typeof req.body.paused !== "boolean") {
       return res.status(400).json({ success: false, message: "Indicá si las ventas están pausadas" });
     }
+    const before = req.managedEvent.salesPaused;
     await req.managedEvent.update({ salesPaused: req.body.paused });
+    await audit(req, {
+      action: req.body.paused ? "SALES_PAUSE" : "SALES_RESUME",
+      entityType: "Event",
+      entityId: req.managedEvent.id,
+      eventId: req.managedEvent.id,
+      details: { salesPaused: { from: before, to: req.body.paused } },
+    });
     res.json({ success: true, salesPaused: req.body.paused });
   } catch (error) {
     serverError(res, error, "Error al cambiar el estado de las ventas");
@@ -275,7 +312,15 @@ const activateAccount = async (req, res) => {
     const account = await PaymentAccount.findOne({ where: { id: req.params.id, eventId: event.id } });
     if (!account) return res.status(404).json({ success: false, message: "Cuenta no encontrada" });
 
+    const previous = event.paymentAccountId || null;
     await event.update({ paymentAccountId: account.id });
+    await audit(req, {
+      action: "PAYMENT_ACCOUNT_ACTIVATE",
+      entityType: "PaymentAccount",
+      entityId: account.id,
+      eventId: event.id,
+      details: { activeAccountId: { from: previous, to: account.id } },
+    });
     res.json({ success: true, account: { ...present(account), active: true } });
   } catch (error) {
     serverError(res, error, "Error al activar la cuenta");
@@ -303,6 +348,13 @@ const deleteAccount = async (req, res) => {
       });
     }
     await account.destroy();
+    await audit(req, {
+      action: "PAYMENT_ACCOUNT_DELETE",
+      entityType: "PaymentAccount",
+      entityId: account.id,
+      eventId: event.id,
+      details: { name: account.name },
+    });
     res.json({ success: true });
   } catch (error) {
     serverError(res, error, "Error al borrar la cuenta");

@@ -5,6 +5,7 @@ const Purchase = require("../models/Purchase");
 const Pack = require("../models/Pack");
 const { sequelize } = require("../config/database");
 const { parseLotInput } = require("../utils/lots");
+const { audit } = require("../utils/audit");
 
 /**
  * Buscar el evento y verificar que el usuario logueado puede administrarlo.
@@ -63,6 +64,13 @@ const addLot = async (req, res) => {
       ticketsAvailable: data.quantity,
       position: position + 1,
     });
+    await audit(req, {
+      action: "LOT_CREATE",
+      entityType: "Lot",
+      entityId: lot.id,
+      eventId: event.id,
+      details: { price: Number(lot.price), quantity: lot.quantity },
+    });
     res.status(201).json({ success: true, lot });
   } catch (error) {
     serverError(res, error, "Error al agregar el lote");
@@ -89,6 +97,7 @@ const updateLot = async (req, res) => {
       return res.status(400).json({ success: false, message: "Ya existe un lote con ese nombre" });
     }
 
+    const before = { name: lot.name, price: Number(lot.price), quantity: lot.quantity };
     await sequelize.transaction(async (transaction) => {
       // Nombre y precio solo cambian para las compras futuras
       const plain = {};
@@ -131,7 +140,14 @@ const updateLot = async (req, res) => {
       }
     });
 
-    res.json({ success: true, lot: await Lot.findByPk(lot.id) });
+    const updated = await Lot.findByPk(lot.id);
+    const details = {};
+    if (updated.name !== before.name) details.name = { from: before.name, to: updated.name };
+    if (Number(updated.price) !== before.price) details.price = { from: before.price, to: Number(updated.price) };
+    if (updated.quantity !== before.quantity) details.quantity = { from: before.quantity, to: updated.quantity };
+    if (req.body.soldOut === true) details.soldOut = true;
+    await audit(req, { action: "LOT_UPDATE", entityType: "Lot", entityId: lot.id, eventId: event.id, details });
+    res.json({ success: true, lot: updated });
   } catch (error) {
     if (error.status === 400) {
       return res.status(400).json({ success: false, message: error.message });
@@ -170,6 +186,13 @@ const deleteLot = async (req, res) => {
     // Los paquetes de este lote ya no tienen sentido
     await Pack.destroy({ where: { lotId: lot.id } });
     await lot.destroy();
+    await audit(req, {
+      action: "LOT_DELETE",
+      entityType: "Lot",
+      entityId: lot.id,
+      eventId: event.id,
+      details: { price: Number(lot.price), quantity: lot.quantity },
+    });
     res.json({ success: true, message: "Lote eliminado" });
   } catch (error) {
     serverError(res, error, "Error al eliminar el lote");

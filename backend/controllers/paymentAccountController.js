@@ -4,6 +4,7 @@ const { sequelize } = require("../config/database");
 const { encrypt } = require("../utils/secrets");
 const { isSalesPaused, setSalesPaused } = require("../utils/paymentAccounts");
 const { request } = require("../utils/payments/http");
+const { audit } = require("../utils/audit");
 
 // Resumen de una cuenta para el panel: el token nunca sale del servidor
 const present = (account) => ({
@@ -87,6 +88,13 @@ const createPaymentAccount = async (req, res) => {
       tokenHint: accessToken.slice(-4),
       eventId: req.managedEvent ? req.managedEvent.id : null,
     });
+    await audit(req, {
+      action: "PAYMENT_ACCOUNT_CREATE",
+      entityType: "PaymentAccount",
+      entityId: account.id,
+      eventId: account.eventId,
+      details: { name: account.name },
+    });
     res.status(201).json({ success: true, account: present(account) });
   } catch (error) {
     console.error(error);
@@ -109,10 +117,13 @@ const activatePaymentAccount = async (req, res) => {
       });
     }
 
+    let previousId = null;
     const result = await sequelize.transaction(async (transaction) => {
       // Solo cuentas generales: las que cargan los organizadores son de cada evento
       const account = await PaymentAccount.findOne({ where: { id: req.params.id, eventId: null }, transaction });
       if (!account) return null;
+      const prev = await PaymentAccount.findOne({ where: { eventId: null, active: true }, transaction });
+      previousId = prev ? prev.id : null;
       await PaymentAccount.update({ active: false }, { where: { eventId: null }, transaction });
       account.active = true;
       await account.save({ transaction });
@@ -122,6 +133,12 @@ const activatePaymentAccount = async (req, res) => {
     if (!result) {
       return res.status(404).json({ success: false, message: "Cuenta no encontrada" });
     }
+    await audit(req, {
+      action: "PAYMENT_ACCOUNT_ACTIVATE",
+      entityType: "PaymentAccount",
+      entityId: result.id,
+      details: { activeAccountId: { from: previousId, to: result.id } },
+    });
     res.json({ success: true, account: present(result) });
   } catch (error) {
     console.error(error);
@@ -151,6 +168,12 @@ const deletePaymentAccount = async (req, res) => {
       });
     }
     await account.destroy();
+    await audit(req, {
+      action: "PAYMENT_ACCOUNT_DELETE",
+      entityType: "PaymentAccount",
+      entityId: account.id,
+      details: { name: account.name },
+    });
     res.json({ success: true });
   } catch (error) {
     console.error(error);
@@ -169,7 +192,14 @@ const updateSalesPaused = async (req, res) => {
     if (typeof req.body.paused !== "boolean") {
       return res.status(400).json({ success: false, message: "Indicá si las ventas están pausadas" });
     }
+    const before = await isSalesPaused();
     await setSalesPaused(req.body.paused);
+    await audit(req, {
+      action: req.body.paused ? "SALES_PAUSE" : "SALES_RESUME",
+      entityType: "Setting",
+      entityId: "salesPaused",
+      details: { salesPaused: { from: before, to: req.body.paused } },
+    });
     res.json({ success: true, salesPaused: req.body.paused });
   } catch (error) {
     console.error(error);

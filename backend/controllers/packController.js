@@ -2,6 +2,7 @@ const Lot = require("../models/Lot");
 const Pack = require("../models/Pack");
 const { parsePackInput } = require("../utils/packs");
 const { findManagedEvent } = require("./lotController");
+const { audit } = require("../utils/audit");
 
 const serverError = (res, error, message) => {
   console.error(error);
@@ -44,6 +45,13 @@ const addPack = async (req, res) => {
     }
 
     const pack = await Pack.create({ ...data, eventId: event.id });
+    await audit(req, {
+      action: "PACK_CREATE",
+      entityType: "Pack",
+      entityId: pack.id,
+      eventId: event.id,
+      details: { lotId: pack.lotId, quantity: pack.quantity, discountPercent: Number(pack.discountPercent) },
+    });
     res.status(201).json({ success: true, pack: toJSON(pack) });
   } catch (error) {
     serverError(res, error, "Error al crear el paquete");
@@ -78,7 +86,15 @@ const updatePack = async (req, res) => {
       });
     }
 
+    const before = { lotId: pack.lotId, quantity: pack.quantity, discountPercent: Number(pack.discountPercent) };
     await pack.update(data);
+    const details = {};
+    if (pack.lotId !== before.lotId) details.lotId = { from: before.lotId, to: pack.lotId };
+    if (pack.quantity !== before.quantity) details.quantity = { from: before.quantity, to: pack.quantity };
+    if (Number(pack.discountPercent) !== before.discountPercent) {
+      details.discountPercent = { from: before.discountPercent, to: Number(pack.discountPercent) };
+    }
+    await audit(req, { action: "PACK_UPDATE", entityType: "Pack", entityId: pack.id, eventId: event.id, details });
     res.json({ success: true, pack: toJSON(pack) });
   } catch (error) {
     serverError(res, error, "Error al actualizar el paquete");
@@ -99,6 +115,7 @@ const deletePack = async (req, res) => {
     if (!pack) return res.status(404).json({ success: false, message: "Paquete no encontrado" });
 
     await pack.destroy();
+    await audit(req, { action: "PACK_DELETE", entityType: "Pack", entityId: pack.id, eventId: event.id });
     res.json({ success: true, message: "Paquete eliminado" });
   } catch (error) {
     serverError(res, error, "Error al eliminar el paquete");

@@ -6,6 +6,13 @@ const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null;
 
+// Aviso único al cargar el módulo: el servidor sigue funcionando sin envío de emails
+if (!resend && process.env.NODE_ENV === "production") {
+  console.warn(
+    "AVISO: RESEND_API_KEY no está configurada; en producción no se enviarán emails con las entradas"
+  );
+}
+
 const esc = (s) =>
   String(s ?? "").replace(
     /[&<>"']/g,
@@ -26,9 +33,15 @@ const ticketsUrl = (accessToken) =>
  */
 const sendTicketsEmail = async ({ purchase, event, tickets }) => {
   if (!resend) {
-    console.log(
-      `[email inactivo] Entradas de ${purchase.buyerEmail}: ${ticketsUrl(purchase.accessToken)}`
-    );
+    if (process.env.NODE_ENV === "production") {
+      // En producción nunca se escribe el email ni el link (lleva el accessToken)
+      console.error(`EMAIL NO ENVIADO: falta RESEND_API_KEY (compra ${purchase.id})`);
+    } else {
+      // Desarrollo y tests: el link sale por consola para poder probar sin Resend
+      console.log(
+        `[email inactivo] Entradas de ${purchase.buyerEmail}: ${ticketsUrl(purchase.accessToken)}`
+      );
+    }
     return false;
   }
 

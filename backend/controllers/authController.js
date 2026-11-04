@@ -1,5 +1,7 @@
 const User = require("../models/User");
 const jwt = require("jsonwebtoken");
+const { audit } = require("../utils/audit");
+const { maskEmail } = require("../utils/redact");
 require("dotenv").config();
 
 // Roles que pueden iniciar sesión
@@ -42,12 +44,26 @@ const login = async (req, res) => {
       // Solo el personal tiene cuenta. Las cuentas "user" que quedaron del
       // registro anterior no tienen ningún permiso
       if (!STAFF_ROLES.includes(user.role)) {
+        await audit(req, {
+          action: "LOGIN_FAIL",
+          entityType: "User",
+          entityId: user.id,
+          result: "denied",
+          actor: { id: user.id, role: user.role },
+          details: { reason: "no_role", email: maskEmail(email) },
+        });
         return res.status(403).json({
           success: false,
           message: "Esta cuenta no tiene acceso. Pedile a un administrador que te habilite",
         });
       }
 
+      await audit(req, {
+        action: "LOGIN_OK",
+        entityType: "User",
+        entityId: user.id,
+        actor: { id: user.id, role: user.role },
+      });
       res.json({
         success: true,
         user: {
@@ -59,6 +75,14 @@ const login = async (req, res) => {
         token: generateToken(user),
       });
     } else {
+      await audit(req, {
+        action: "LOGIN_FAIL",
+        entityType: "User",
+        entityId: user ? user.id : null,
+        result: "failure",
+        actor: user ? { id: user.id, role: user.role } : null,
+        details: { reason: "bad_credentials", email: maskEmail(email) },
+      });
       res.status(401).json({
         success: false,
         message: "Correo electrónico o contraseña incorrectos",

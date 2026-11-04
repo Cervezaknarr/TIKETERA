@@ -11,9 +11,11 @@ const { itemsOf, pendingByLot, releaseStock, reserveItems } = require("../utils/
 const QRCode = require("qrcode");
 const { generateTicketCode } = require("../utils/ticketCode");
 const { sendTicketsEmail } = require("../utils/mailer");
+const { maskEmail } = require("../utils/redact");
 const { getProvider } = require("../utils/payments");
 const { paymentWindowMinutes } = require("../utils/paymentWindow");
 const { isSalesPaused } = require("../utils/paymentAccounts");
+const { audit } = require("../utils/audit");
 
 // Hasta cuándo puede pagar el comprador (para mostrarle el contador)
 const paymentDeadline = (purchase) =>
@@ -83,6 +85,13 @@ const voidPurchaseFromPanel = async (req, res) => {
         message: "Solo se pueden anular compras pagas que todavía no fueron anuladas",
       });
     }
+    await audit(req, {
+      action: "PURCHASE_VOID",
+      entityType: "Purchase",
+      entityId: req.params.purchaseId,
+      eventId: req.managedEvent.id,
+      details: { status: { from: "completed", to: "refunded" }, ticketsVoided: result.voided, ticketsAlreadyUsed: result.used },
+    });
     res.json({
       success: true,
       message:
@@ -118,6 +127,7 @@ const resendPurchaseEmail = async (req, res) => {
       });
     }
     if (Date.now() - (lastResend.get(purchase.id) || 0) < RESEND_COOLDOWN_MS) {
+      await audit(req, { action: "TICKETS_RESEND", entityType: "Purchase", entityId: purchase.id, eventId: purchase.eventId, result: "failure", details: { reason: "cooldown", status: 429 } });
       return res.status(429).json({
         success: false,
         message: "Ya se envió hace un momento. Esperá unos segundos antes de reenviar",
@@ -129,12 +139,14 @@ const resendPurchaseEmail = async (req, res) => {
       sent = await sendPurchaseEmail(purchase.id);
     } catch (error) {
       console.error(`Error al reenviar las entradas de la compra ${purchase.id}:`, error);
+      await audit(req, { action: "TICKETS_RESEND", entityType: "Purchase", entityId: purchase.id, eventId: purchase.eventId, result: "failure", details: { reason: "send_error", status: 502 } });
       return res.status(502).json({
         success: false,
         message: "No se pudo enviar el email. Probá de nuevo o copiá el link de las entradas",
       });
     }
     if (!sent) {
+      await audit(req, { action: "TICKETS_RESEND", entityType: "Purchase", entityId: purchase.id, eventId: purchase.eventId, result: "failure", details: { reason: "mail_not_configured", status: 503 } });
       return res.status(503).json({
         success: false,
         message: "El envío de emails todavía no está configurado. Copiá el link y mandáselo a mano",
@@ -142,6 +154,12 @@ const resendPurchaseEmail = async (req, res) => {
     }
 
     lastResend.set(purchase.id, Date.now());
+    await audit(req, {
+      action: "TICKETS_RESEND",
+      entityType: "Purchase",
+      entityId: purchase.id,
+      eventId: purchase.eventId,
+    });
     res.json({ success: true, message: `Entradas enviadas a ${purchase.buyerEmail}` });
   } catch (error) {
     console.error(error);
@@ -479,6 +497,8 @@ const handlePaymentWebhook = async (req, res) => {
 
     // La pasarela puede mandar el mismo webhook varias veces: todo se hace en una
     // transacción con la compra bloqueada, y solo se procesa si sigue en "pending"
+    let mismatchPurchaseId = null;
+    let outcome = null; // { id, eventId, ...details } para auditar tras el commit
     const result = await sequelize.transaction(async (transaction) => {
       const purchase = await Purchase.findOne({
         where: { paymentGatewayId },
@@ -488,15 +508,27 @@ const handlePaymentWebhook = async (req, res) => {
 
       if (!purchase) return "not_found";
 
+      // La cuenta con la que se consultó el pago debe ser la de la compra; si no,
+      // un tercero podría confirmar/anular compras ajenas con un pago propio
+      if (
+        notification.accountId !== undefined &&
+        (notification.accountId || null) !== (purchase.paymentAccountId || null)
+      ) {
+        console.error(`WEBHOOK_ACC_MISMATCH purchase=${purchase.id}`);
+        mismatchPurchaseId = { id: purchase.id, eventId: purchase.eventId };
+        return "not_found";
+      }
+
       // Pago aprobado que llega después de que la compra venció y se liberó su
       // cupo (por ejemplo, un pago en efectivo): se intenta reservar de nuevo
       const lateApproval = status === "approved" && purchase.status === "failed";
       if (status === "refunded" && purchase.status === "completed") {
         const { voided, used } = await voidPurchase(purchase, transaction);
         console.error(
-          `COMPRA DEVUELTA O CONTRACARGADA: la compra ${purchase.id} (${purchase.buyerEmail}) pasó a "refunded"; ` +
+          `COMPRA DEVUELTA O CONTRACARGADA: la compra ${purchase.id} (${maskEmail(purchase.buyerEmail)}) pasó a "refunded"; ` +
             `${voided} entrada(s) anulada(s)${used ? `, ${used} ya habían entrado` : ""}`
         );
+        outcome = { id: purchase.id, eventId: purchase.eventId, ticketsVoided: voided, ticketsAlreadyUsed: used };
         return "voided";
       }
       if (purchase.status !== "pending" && !lateApproval) return "already_processed";
@@ -510,11 +542,13 @@ const handlePaymentWebhook = async (req, res) => {
           (paidAmount !== Math.round(Number(purchase.totalPrice) * 100) ||
             (currency && currency !== "ARS"))
         ) {
+          outcome = { id: purchase.id, eventId: purchase.eventId };
           return "amount_mismatch";
         }
 
         const items = await itemsOf(purchase, transaction);
         if (lateApproval && (await reserveItems(items, transaction))) {
+          outcome = { id: purchase.id, eventId: purchase.eventId };
           return "paid_without_stock";
         }
         purchase.status = "completed";
@@ -550,13 +584,47 @@ const handlePaymentWebhook = async (req, res) => {
     });
 
     if (result === "not_found") {
+      // Fuera de la transacción: dentro, el registro se perdería si hiciera rollback
+      if (mismatchPurchaseId) {
+        await audit(req, {
+          action: "WEBHOOK_ACC_MISMATCH",
+          entityType: "Purchase",
+          entityId: mismatchPurchaseId.id,
+          eventId: mismatchPurchaseId.eventId,
+          result: "denied",
+          actor: null,
+        });
+      }
       return res.status(404).json({
         success: false,
         message: "Compra no encontrada",
       });
     }
 
+    if (result === "voided" && outcome) {
+      await audit(req, {
+        action: "PURCHASE_VOID_AUTO",
+        entityType: "Purchase",
+        entityId: outcome.id,
+        eventId: outcome.eventId,
+        actor: null,
+        details: {
+          status: { from: "completed", to: "refunded" },
+          ticketsVoided: outcome.ticketsVoided,
+          ticketsAlreadyUsed: outcome.ticketsAlreadyUsed,
+        },
+      });
+    }
+
     if (result === "amount_mismatch") {
+      await audit(req, {
+        action: "PAYMENT_AMOUNT_MISMATCH",
+        entityType: "Purchase",
+        entityId: outcome.id,
+        eventId: outcome.eventId,
+        result: "denied",
+        actor: null,
+      });
       // Hay que revisar el pago a mano. Se responde 200 para que la pasarela no reintente
       console.error(
         `PAGO CON MONTO DISTINTO: la compra con pasarela ${paymentGatewayId} se aprobó por ${amount} ${currency || ""} y no coincide con lo que se cobraba. No se emitieron entradas.`
@@ -568,6 +636,14 @@ const handlePaymentWebhook = async (req, res) => {
     }
 
     if (result === "paid_without_stock") {
+      await audit(req, {
+        action: "PAYMENT_NO_STOCK",
+        entityType: "Purchase",
+        entityId: outcome.id,
+        eventId: outcome.eventId,
+        result: "failure",
+        actor: null,
+      });
       // Hay que devolverle la plata al comprador a mano. Se responde 200 para que
       // la pasarela no siga reintentando el aviso
       console.error(

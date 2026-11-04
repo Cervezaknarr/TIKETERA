@@ -6,6 +6,7 @@ const Purchase = require("../models/Purchase");
 const StaffEvent = require("../models/StaffEvent");
 const { sequelize } = require("../config/database");
 const { parseLotInput, withLots } = require("../utils/lots");
+const { audit } = require("../utils/audit");
 
 const EVENT_STATUSES = ["draft", "published", "cancelled"];
 const MAX_PAGE_SIZE = 100;
@@ -151,6 +152,13 @@ const createEvent = async (req, res) => {
       return created;
     });
 
+    await audit(req, {
+      action: "EVENT_CREATE",
+      entityType: "Event",
+      entityId: event.id,
+      eventId: event.id,
+      details: { status: event.status, organizerId: event.organizerId || null, lots: lotsData.length },
+    });
     res.status(201).json({
       success: true,
       event: await withLots(event, { admin: true }),
@@ -321,7 +329,24 @@ const updateEvent = async (req, res) => {
       event.adultsOnly = age.minAge != null;
     }
 
+    // Solo los campos que cambiaron; portada y textos largos: únicamente que cambiaron
+    const changed = event.changed() || [];
+    const details = {};
+    for (const key of changed) {
+      if (["status", "organizerId", "minAge"].includes(key)) {
+        details[key] = { from: event.previous(key) ?? null, to: event.get(key) ?? null };
+      } else if (key !== "adultsOnly" && key !== "slug") {
+        details[key] = true;
+      }
+    }
     await event.save();
+    await audit(req, {
+      action: "EVENT_UPDATE",
+      entityType: "Event",
+      entityId: event.id,
+      eventId: event.id,
+      details,
+    });
 
     res.json({
       success: true,
@@ -363,8 +388,16 @@ const deleteEvent = async (req, res) => {
 
     if (purchasesCount > 0) {
       // Si hay compras, en lugar de eliminar, cambiar el estado a cancelado
+      const previousStatus = event.status;
       event.status = "cancelled";
       await event.save();
+      await audit(req, {
+        action: "EVENT_DELETE",
+        entityType: "Event",
+        entityId: event.id,
+        eventId: event.id,
+        details: { cancelledInsteadOfDeleted: true, status: { from: previousStatus, to: "cancelled" } },
+      });
 
       return res.json({
         success: true,
@@ -379,6 +412,7 @@ const deleteEvent = async (req, res) => {
       await StaffEvent.destroy({ where: { eventId: event.id }, transaction });
       await event.destroy({ transaction });
     });
+    await audit(req, { action: "EVENT_DELETE", entityType: "Event", entityId: event.id, eventId: event.id });
 
     res.json({
       success: true,
