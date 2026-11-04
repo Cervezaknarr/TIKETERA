@@ -11,7 +11,7 @@ const { itemsOf, pendingByLot, releaseStock, reserveItems } = require("../utils/
 const QRCode = require("qrcode");
 const { generateTicketCode } = require("../utils/ticketCode");
 const { sendTicketsEmail } = require("../utils/mailer");
-const { maskEmail } = require("../utils/redact");
+const { maskEmail, scrubFreeText } = require("../utils/redact");
 const { getProvider } = require("../utils/payments");
 const { paymentWindowMinutes } = require("../utils/paymentWindow");
 const { isSalesPaused } = require("../utils/paymentAccounts");
@@ -65,6 +65,15 @@ const lastResend = new Map();
  */
 const voidPurchaseFromPanel = async (req, res) => {
   try {
+    // Motivo obligatorio (queda en la auditoría): texto de 3 a 200 caracteres
+    const reason = typeof (req.body || {}).reason === "string" ? req.body.reason.trim() : "";
+    if (reason.length < 3 || reason.length > 200) {
+      return res.status(400).json({
+        success: false,
+        message: "Indicá el motivo de la anulación (entre 3 y 200 caracteres)",
+      });
+    }
+
     const result = await sequelize.transaction(async (transaction) => {
       const purchase = await Purchase.findOne({
         where: { id: req.params.purchaseId, eventId: req.managedEvent.id },
@@ -73,7 +82,23 @@ const voidPurchaseFromPanel = async (req, res) => {
       });
       if (!purchase) return { notFound: true };
       if (purchase.status !== "completed") return { notPaid: true };
-      return voidPurchase(purchase, transaction);
+      const voidResult = await voidPurchase(purchase, transaction);
+      // Estricta y dentro de la transacción: si no se puede auditar, la anulación se revierte
+      await audit(req, {
+        action: "PURCHASE_VOID",
+        entityType: "Purchase",
+        entityId: purchase.id,
+        eventId: req.managedEvent.id,
+        details: {
+          status: { from: "completed", to: "refunded" },
+          ticketsVoided: voidResult.voided,
+          ticketsAlreadyUsed: voidResult.used,
+          reason: scrubFreeText(reason), // sin emails ni números largos (DNI, teléfonos)
+        },
+        transaction,
+        strict: true,
+      });
+      return voidResult;
     });
 
     if (result.notFound) {
@@ -85,13 +110,6 @@ const voidPurchaseFromPanel = async (req, res) => {
         message: "Solo se pueden anular compras pagas que todavía no fueron anuladas",
       });
     }
-    await audit(req, {
-      action: "PURCHASE_VOID",
-      entityType: "Purchase",
-      entityId: req.params.purchaseId,
-      eventId: req.managedEvent.id,
-      details: { status: { from: "completed", to: "refunded" }, ticketsVoided: result.voided, ticketsAlreadyUsed: result.used },
-    });
     res.json({
       success: true,
       message:
@@ -160,7 +178,7 @@ const resendPurchaseEmail = async (req, res) => {
       entityId: purchase.id,
       eventId: purchase.eventId,
     });
-    res.json({ success: true, message: `Entradas enviadas a ${purchase.buyerEmail}` });
+    res.json({ success: true, message: `Entradas enviadas a ${maskEmail(purchase.buyerEmail)}` });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: "Error al reenviar las entradas" });
@@ -510,9 +528,13 @@ const handlePaymentWebhook = async (req, res) => {
 
       // La cuenta con la que se consultó el pago debe ser la de la compra; si no,
       // un tercero podría confirmar/anular compras ajenas con un pago propio
+      // Falla cerrado: si la pasarela no informa la clave `accountId`,
+      // no se puede comprobar la cuenta y se trata como mismatch
+      const accountUnknown = notification.accountId === undefined;
       if (
-        notification.accountId !== undefined &&
-        (notification.accountId || null) !== (purchase.paymentAccountId || null)
+        accountUnknown ||
+        (notification.accountId !== undefined &&
+          (notification.accountId || null) !== (purchase.paymentAccountId || null))
       ) {
         console.error(`WEBHOOK_ACC_MISMATCH purchase=${purchase.id}`);
         mismatchPurchaseId = { id: purchase.id, eventId: purchase.eventId };
@@ -529,6 +551,21 @@ const handlePaymentWebhook = async (req, res) => {
             `${voided} entrada(s) anulada(s)${used ? `, ${used} ya habían entrado` : ""}`
         );
         outcome = { id: purchase.id, eventId: purchase.eventId, ticketsVoided: voided, ticketsAlreadyUsed: used };
+        // Estricta y dentro de la transacción: sin registro de auditoría no se anula
+        await audit(req, {
+          action: "PURCHASE_VOID_AUTO",
+          entityType: "Purchase",
+          entityId: purchase.id,
+          eventId: purchase.eventId,
+          actor: null,
+          details: {
+            status: { from: "completed", to: "refunded" },
+            ticketsVoided: voided,
+            ticketsAlreadyUsed: used,
+          },
+          transaction,
+          strict: true,
+        });
         return "voided";
       }
       if (purchase.status !== "pending" && !lateApproval) return "already_processed";
@@ -565,6 +602,7 @@ const handlePaymentWebhook = async (req, res) => {
           }))
         );
         await Ticket.bulkCreate(tickets, { transaction });
+        outcome = { id: purchase.id, eventId: purchase.eventId, confirmed: true, tickets: tickets.length };
 
         // El email se manda después del commit, así nunca llega una entrada que no existe
         transaction.afterCommit(() => {
@@ -601,18 +639,15 @@ const handlePaymentWebhook = async (req, res) => {
       });
     }
 
-    if (result === "voided" && outcome) {
+    if (result === "processed" && outcome && outcome.confirmed) {
+      // Tras el commit: el pago confirmado queda registrado (sin datos del comprador)
       await audit(req, {
-        action: "PURCHASE_VOID_AUTO",
+        action: "PAYMENT_CONFIRMED",
         entityType: "Purchase",
         entityId: outcome.id,
         eventId: outcome.eventId,
         actor: null,
-        details: {
-          status: { from: "completed", to: "refunded" },
-          ticketsVoided: outcome.ticketsVoided,
-          ticketsAlreadyUsed: outcome.ticketsAlreadyUsed,
-        },
+        details: { tickets: outcome.tickets },
       });
     }
 

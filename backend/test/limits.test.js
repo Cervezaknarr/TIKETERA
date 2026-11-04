@@ -180,7 +180,19 @@ test("con el máximo en 0 el limitador no limita", async () => {
   }
 });
 
-test("la retención del cupo sigue a la ventana de pago", async () => {
+// Estos tests asumen que PURCHASE_HOLD_MINUTES no está fijada (el .env local puede traerla)
+const withoutHoldEnv = (fn) => async () => {
+  const saved = process.env.PURCHASE_HOLD_MINUTES;
+  delete process.env.PURCHASE_HOLD_MINUTES;
+  try {
+    await fn();
+  } finally {
+    if (saved === undefined) delete process.env.PURCHASE_HOLD_MINUTES;
+    else process.env.PURCHASE_HOLD_MINUTES = saved;
+  }
+};
+
+test("la retención del cupo sigue a la ventana de pago", withoutHoldEnv(async () => {
   assert.equal(paymentWindowMinutes(), 10);
   assert.equal(holdMinutes(), 15);
 
@@ -195,9 +207,9 @@ test("la retención del cupo sigue a la ventana de pago", async () => {
     delete process.env.PAYMENT_WINDOW_MINUTES;
     delete process.env.PURCHASE_HOLD_MINUTES;
   }
-});
+}));
 
-test("una compra pendiente se libera pasada la retención nueva y no antes", async () => {
+test("una compra pendiente se libera pasada la retención nueva y no antes", withoutHoldEnv(async () => {
   const event = await newEvent(10);
   const { purchase } = (await buy(event, 3, "retencion@test.com")).body;
   assert.equal(await available(event), 7);
@@ -217,7 +229,7 @@ test("una compra pendiente se libera pasada la retención nueva y no antes", asy
   );
   assert.equal(await releaseExpiredPurchases(), 1);
   assert.equal(await available(event), 10);
-});
+}));
 
 test("el nombre del comprador tiene un largo máximo", async () => {
   const event = await newEvent(10);

@@ -6,6 +6,7 @@ const Scan = require("../models/Scan");
 const { sequelize } = require("../config/database");
 const { normalizeTicketCode } = require("../utils/ticketCode");
 const { eventIdsOfStaff } = require("../utils/staffEvents");
+const { auditBulk } = require("../utils/audit");
 
 // Máximo de escaneos por request (un dispositivo offline puede acumular muchos)
 const MAX_SCANS_PER_SYNC = 500;
@@ -37,7 +38,7 @@ const serializeTicket = (ticket) => ({
 const applyScan = async ({ scan, eventId, deviceId, staffUserId }) => {
   const existing = await Scan.findByPk(scan.id, { include: [Ticket] });
   if (existing) {
-    return { result: existing.result, ticket: existing.Ticket };
+    return { result: existing.result, ticket: existing.Ticket, replayed: true };
   }
 
   const code = normalizeTicketCode(scan.code);
@@ -88,7 +89,7 @@ const applyScan = async ({ scan, eventId, deviceId, staffUserId }) => {
     // Dos requests con el mismo escaneo en paralelo: la otra ya lo guardó
     if (error instanceof UniqueConstraintError) {
       const saved = await Scan.findByPk(scan.id, { include: [Ticket] });
-      if (saved) return { result: saved.result, ticket: saved.Ticket };
+      if (saved) return { result: saved.result, ticket: saved.Ticket, replayed: true };
     }
     throw error;
   }
@@ -161,13 +162,26 @@ const syncCheckin = async (req, res) => {
     // Procesar en orden: si el mismo dispositivo escaneó dos veces la misma
     // entrada, la primera es "admitted" y la segunda "duplicate"
     const results = [];
+    const auditEntries = [];
     for (const scan of scans) {
-      const { result, ticket } = await applyScan({
+      const { result, ticket, replayed } = await applyScan({
         scan,
         eventId,
         deviceId,
         staffUserId: req.user.id,
       });
+      // Los reenvíos de un escaneo ya guardado no se vuelven a auditar. Sin datos del
+      // comprador ni el código en bruto. Se insertan juntos al final del loop
+      if (!replayed) {
+        auditEntries.push({
+          action: result === "admitted" ? "CHECKIN_OK" : "CHECKIN_REJECTED",
+          entityType: "Ticket",
+          entityId: ticket ? ticket.id : null,
+          eventId,
+          result: result === "admitted" ? "success" : result === "invalid" ? "failure" : "denied",
+          details: { scanId: scan.id, scanResult: result, deviceId: deviceId.slice(0, 64) },
+        });
+      }
       results.push({
         id: scan.id,
         result,
@@ -181,6 +195,9 @@ const syncCheckin = async (req, res) => {
           : null,
       });
     }
+
+    // Un único insert para todo el sync, fuera de cualquier transacción (no falla el sync)
+    await auditBulk(req, auditEntries);
 
     // Tomar la hora antes de consultar, así el próximo sync no se pierde nada
     const serverTime = new Date();

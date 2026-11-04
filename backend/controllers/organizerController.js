@@ -13,6 +13,7 @@ const { withLots } = require("../utils/lots");
 const { present } = require("./paymentAccountController");
 const { MIN_PASSWORD_LENGTH } = require("./userController");
 const { audit } = require("../utils/audit");
+const { sequelize } = require("../config/database");
 
 // Panel del organizador. Todas las rutas con :eventId pasan antes por el middleware
 // eventManager, que deja el evento en req.managedEvent solo si el usuario es el
@@ -313,13 +314,17 @@ const activateAccount = async (req, res) => {
     if (!account) return res.status(404).json({ success: false, message: "Cuenta no encontrada" });
 
     const previous = event.paymentAccountId || null;
-    await event.update({ paymentAccountId: account.id });
-    await audit(req, {
-      action: "PAYMENT_ACCOUNT_ACTIVATE",
-      entityType: "PaymentAccount",
-      entityId: account.id,
-      eventId: event.id,
-      details: { activeAccountId: { from: previous, to: account.id } },
+    await sequelize.transaction(async (transaction) => {
+      await event.update({ paymentAccountId: account.id }, { transaction });
+      await audit(req, {
+        action: "PAYMENT_ACCOUNT_ACTIVATE",
+        entityType: "PaymentAccount",
+        entityId: account.id,
+        eventId: event.id,
+        details: { activeAccountId: { from: previous, to: account.id } },
+        transaction,
+        strict: true,
+      });
     });
     res.json({ success: true, account: { ...present(account), active: true } });
   } catch (error) {
@@ -347,13 +352,17 @@ const deleteAccount = async (req, res) => {
         message: "Esta cuenta ya cobró compras y su token hace falta para confirmar pagos",
       });
     }
-    await account.destroy();
-    await audit(req, {
-      action: "PAYMENT_ACCOUNT_DELETE",
-      entityType: "PaymentAccount",
-      entityId: account.id,
-      eventId: event.id,
-      details: { name: account.name },
+    await sequelize.transaction(async (transaction) => {
+      await account.destroy({ transaction });
+      await audit(req, {
+        action: "PAYMENT_ACCOUNT_DELETE",
+        entityType: "PaymentAccount",
+        entityId: account.id,
+        eventId: event.id,
+        details: { name: account.name },
+        transaction,
+        strict: true,
+      });
     });
     res.json({ success: true });
   } catch (error) {

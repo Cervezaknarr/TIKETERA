@@ -181,6 +181,49 @@ _(T1.20: número reservado, sin tarea asignada.)_
 - **Descripción:** `docs/seguridad/plan-incidentes.md` (roles, severidades, detección, contención, comunicación a compradores/organizadores, notificación a la AAIP según Ley 25.326 cuando aplique, conservación de evidencia, lecciones aprendidas, registro de incidentes). Runbooks en `docs/runbooks/`: `pago-aprobado-sin-cupo.md`, `pago-monto-distinto.md`, `compra-devuelta-contracargo.md`, `webhook-cuenta-no-coincide.md`, `credencial-comprometida.md`.
 - **Aceptación:** cada runbook indica cómo se detecta (código de log), pasos en el panel de MP y en `/admin`, cómo se verifica la resolución y qué se registra; `revisor-docs` lo contrasta con el código.
 
+### T1.28 — Webhook fail-closed ante cuenta desconocida [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Alta · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
+- **Descripción:** `handlePaymentWebhook` trataba la falta de `accountId` como válida. Ahora, si la pasarela (que no sea `mock`) no devuelve la clave `accountId`, es mismatch (404, `WEBHOOK_ACC_MISMATCH`, auditoría). `mock` y `nave` devuelven `accountId: null` explícito.
+- **Decisión/deuda:** los stubs de `payments.test.js` y el `deepEqual` de Nave se ajustaron (añaden `accountId: null`); cualquier pasarela nueva debe informar `accountId`. Tests en `audit.test.js`.
+
+### T1.29 — Auditoría estricta en acciones de dinero [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Alta · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
+- **Descripción:** `audit(req, { strict: true, transaction })` inserta dentro de la transacción y lanza si falla (sin `transaction` también lanza). Aplicado a `PURCHASE_VOID` (movido dentro de la transacción), `PURCHASE_VOID_AUTO` (webhook) y `PAYMENT_ACCOUNT_CREATE/ACTIVATE/DELETE` (admin y organizador, mutación + audit en una transacción). Si el audit falla: rollback y 500. Tests en `audit.test.js` y `refunds.test.js`.
+- **Deuda:** el resto de las acciones sigue siendo no estricto (SALES_PAUSE, USER_*, etc.).
+
+### T1.30 — Ampliar auditoría: check-in, accesos denegados, pago confirmado [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Media · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
+- **Descripción:** `CHECKIN_OK` / `CHECKIN_REJECTED` (result success / denied para duplicada o anulada / failure para código inválido; un solo insert por sync, sin lecturas extra; los reenvíos idempotentes no se re-auditan; sin código ni datos del comprador). `ACCESS_DENIED` en cada 403 de `authMiddleware.js` (actor + `details.method` y `details.route` = patrón de la ruta, p. ej. `/api/organizer/events/:eventId/payments`, o `<baseUrl>/*` si no hay `req.route`; nunca la URL concreta). El check-in audita con un único `AuditLog.bulkCreate` al final del sync (fuera de transacciones, no estricto). En modo strict la línea de stdout sale en `afterCommit`. `PAYMENT_CONFIRMED` (actor null) tras el commit del webhook.
+- **Pendiente:** logout — no existe endpoint de logout (JWT sin estado en el cliente), no se inventó; si se agrega, auditar `LOGOUT`.
+
+### T1.31 — Anulación manual con motivo obligatorio [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Media · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
+- **Descripción:** `POST /api/purchases/event/:eventId/:purchaseId/void` exige body `{ reason: string }` (trim, 3 a 200 caracteres); si no, 400 «Indicá el motivo de la anulación (entre 3 y 200 caracteres)». La validación 3 a 200 va sobre el texto original; en `details.reason` de `PURCHASE_VOID` se guarda enmascarado (`scrubFreeText`: emails con `maskEmail` y toda secuencia de 7 o más dígitos, aunque lleve puntos, guiones o espacios, pasa a `***`). El frontend ya pide el motivo.
+
+### T1.32 — Enmascarar el email en la respuesta del reenvío [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Baja · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
+- **Descripción:** `resendPurchaseEmail` responde «Entradas enviadas a a***@dominio.com» (`maskEmail`). Ojo: si el frontend mostraba el mensaje esperando el email completo, ahora ve el enmascarado.
+
+### T1.33 — Cuentas de pago: chequeos de borrado dentro de la transacción
+- **Agente:** dev-backend · **Severidad:** Media · **Estado:** pendiente
+- **Descripción:** en `organizerController.js` (`deleteAccount`, ~345-353) y `paymentAccountController.js` (`deletePaymentAccount`, ~175) los chequeos (cuenta activa, compras que la usan) se hacen antes y fuera de la transacción: mover dentro con lock `UPDATE` para evitar la carrera con un checkout/activación concurrente.
+
+### T1.34 — Auditar PAYMENT_REJECTED
+- **Agente:** dev-backend · **Severidad:** Baja · **Estado:** pendiente
+- **Descripción:** registrar los pagos rechazados/cancelados del webhook (hoy solo se auditan confirmados, anulaciones, monto distinto, sin cupo y cuenta distinta).
+
+### T1.35 — Auditoría de logout [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Baja · **Estado:** pendiente (bloqueada: no existe endpoint de logout)
+- **Descripción:** auditar `LOGOUT` cuando exista el endpoint.
+
+### T1.36 — Auditoría estricta para SALES_* y USER_* [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Media · **Estado:** pendiente
+- **Descripción:** pasar `SALES_PAUSE/RESUME` (general y por evento) y `USER_CREATE/UPDATE/DELETE` a `strict` con la mutación en la misma transacción.
+
+### T1.37 — Documentar que PAYMENT_CONFIRMED no es estricta
+- **Agente:** documentador · **Severidad:** Baja · **Estado:** pendiente
+- **Descripción:** dejar asentado en la documentación de auditoría que `PAYMENT_CONFIRMED` se registra tras el commit y no es strict por decisión: no se debe revertir un pago ya cobrado ni emitir entradas por un fallo del log; el aviso queda en `AUDIT_WRITE_FAILED`.
+
 ### Cierre de la Ola 1
 - **T1.90** tester — regresión completa, criterios de T1.01–T1.27, ensayo de D1 en Postgres local (baseline + 0002–0004 sobre la base de T1.07). Deps: todas las anteriores. Estado: pendiente.
 - **T1.91** revisor — revisión del diff de la ola, con foco en T1.01, T1.03, T1.12, T1.15, T1.16. Deps: T1.90. Estado: pendiente.
