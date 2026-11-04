@@ -30,7 +30,7 @@ function renderNav() {
        <button class="ghost" onclick="go('edit')">Crear evento</button>
        <button class="ghost" onclick="go('payments')">Pagos</button>
        <button class="ghost" onclick="go('users')">Staff y organizadores</button>
-       <a href="/staff/" class="ghost-link">Escáner</a>
+       <a href="/staffGt/" class="ghost-link">Escáner</a>
        <button onclick="logout()">Salir</button>`
     : '';
 }
@@ -116,7 +116,7 @@ async function viewEdit(id) {
         <option value="">Sin organizador (lo manejo yo)</option>
         ${organizers.map(u => `<option value="${u.id}" ${e.organizerId === u.id ? 'selected' : ''}>${esc(u.name)} · ${esc(u.email)}</option>`).join('')}
       </select>
-      <p class="muted" style="margin:4px 0 12px">El organizador entra a <b>${esc(location.origin)}/organizador</b>: ve los compradores de este evento, crea su staff, escanea entradas y maneja sus cobros (cuenta de Mercado Pago y pausa de ventas). ${organizers.length ? '' : 'Todavía no hay organizadores: creá uno en <b>Staff</b>.'}</p>
+      <p class="muted" style="margin:4px 0 12px">El organizador entra a <b>${esc(location.origin)}/organizadorGt</b>: ve los compradores de este evento, crea su staff, escanea entradas y maneja sus cobros (cuenta de Mercado Pago y pausa de ventas). ${organizers.length ? '' : 'Todavía no hay organizadores: creá uno en <b>Staff</b>.'}</p>
       <label>Estado</label>
       <select id="eStatus">
         ${Object.entries(eventStatus).map(([v, t]) => `<option value="${v}" ${e.status === v ? 'selected' : ''}>${t}</option>`).join('')}
@@ -561,8 +561,8 @@ async function viewUsers() {
   <h2>Personal</h2>
   <div class="card" style="margin-bottom:14px">
     <h3>Agregar usuario</h3>
-    <p class="muted"><b>Staff</b>: entra a <b>${esc(location.origin)}/staff</b> y escanea solo las entradas de los eventos que marques abajo (uno o varios).<br>
-      <b>Organizador</b>: entra a <b>${esc(location.origin)}/organizador</b> y maneja solo los eventos que le asignes al crearlos o editarlos.</p>
+    <p class="muted"><b>Staff</b>: entra a <b>${esc(location.origin)}/staffGt</b> y escanea solo las entradas de los eventos que marques abajo (uno o varios).<br>
+      <b>Organizador</b>: entra a <b>${esc(location.origin)}/organizadorGt</b> y maneja solo los eventos que le asignes al crearlos o editarlos.</p>
     <form onsubmit="submitUser(event)">
       <div class="row">
         <div><label>Nombre</label><input id="uName" required placeholder="Puerta 1"></div>

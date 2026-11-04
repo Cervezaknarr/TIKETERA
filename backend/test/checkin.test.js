@@ -214,6 +214,8 @@ test("el primer sync descarga la lista completa de entradas", async () => {
   assert.equal(res.body.full, true);
   assert.equal(res.body.tickets.length, 3);
   assert.equal(res.body.tickets[0].buyerName, "Juan");
+  // El escáner necesita el nombre para comprobar el DNI, pero no el email (minimización de datos)
+  assert.ok(!("buyerEmail" in res.body.tickets[0]));
   assert.ok(res.body.tickets.every((t) => t.status === "valid"));
 });
 
@@ -328,4 +330,56 @@ test("un evento cancelado no acepta escaneos", async () => {
   const res = await sync("puerta-cancelado");
   assert.equal(res.status, 400);
   await Event.update({ status: "published" }, { where: { id: event.id } });
+});
+
+test("un escaneo de otro evento no se devuelve ni se modifica", async () => {
+  await Event.update({ status: "published" }, { where: { id: event.id } }); // el test anterior lo cancela
+  const other = await Event.create({
+    title: "Otro evento", description: "x", date: new Date(Date.now() + 86400000),
+    location: "Club", userId: event.userId,
+  });
+  const foreign = scan(codes[0]);
+  await Scan.create({
+    id: foreign.id, eventId: other.id, ticketId: null, code: "AAAAA-AAAAA",
+    deviceId: "otro", staffUserId: event.userId, scannedAt: new Date(), result: "admitted",
+  });
+
+  const res = await sync("device-A", [foreign]);
+  assert.equal(res.body.results[0].result, "invalid");
+  assert.equal(res.body.results[0].ticket, null);
+  const row = await Scan.findByPk(foreign.id);
+  assert.equal(row.eventId, other.id);
+  assert.equal(row.result, "admitted");
+});
+
+test("el sync rechaza un deviceId de más de 64 caracteres", async () => {
+  const res = await sync("d".repeat(65));
+  assert.equal(res.status, 400);
+});
+
+test("el listado público de eventos no expone quién los creó", async () => {
+  await Event.update({ status: "published" }, { where: { id: event.id } });
+  const list = await api("GET", "/api/events");
+  assert.equal(list.status, 200);
+  assert.ok(list.body.events.length > 0);
+  for (const e of list.body.events) {
+    assert.ok(!("userId" in e) && !("User" in e) && !("organizerId" in e));
+  }
+  const one = await api("GET", `/api/events/${event.id}`);
+  assert.ok(!("userId" in one.body.event) && !("User" in one.body.event));
+});
+
+test("el checkout rechaza emails con formato inválido", async () => {
+  for (const email of ["sin-arroba", "a@b", "con espacio@x.com", `${"a".repeat(250)}@x.com`, 123]) {
+    const res = await api("POST", "/api/purchases/checkout", {
+      body: { eventId: event.id, items: [{ lotId: lot.id, quantity: 1 }], buyerName: "Ana", buyerEmail: email },
+    });
+    assert.equal(res.status, 400, String(email));
+  }
+});
+
+test("/health comprueba la base y no expone el entorno", async () => {
+  const res = await api("GET", "/health");
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, { status: "ok" });
 });

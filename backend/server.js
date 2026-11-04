@@ -93,17 +93,28 @@ app.use("/api/organizer", organizerRoutes);
 app.use("/api/audit", auditRoutes);
 
 // Health check (lo usa el host para saber si el servidor está vivo)
-app.get("/health", (req, res) => {
-  res.json({
-    message: "API de Kaiser Tikets funcionando correctamente",
-    environment: process.env.NODE_ENV || "development",
-    timestamp: new Date().toISOString(),
-  });
+app.get("/health", async (req, res) => {
+  try {
+    // Comprueba la base con un tope de 2 s; no expone entorno ni versión
+    await Promise.race([
+      sequelize.query("SELECT 1"),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 2000).unref()),
+    ]);
+    res.json({ status: "ok" });
+  } catch (error) {
+    res.status(503).json({ status: "degraded" });
+  }
 });
 
 // Frontend estático: la navegación es por hash (#/...), no hace falta fallback.
-// Tres sitios: / (visitantes: comprar y ver entradas), /staff (escáner) y /admin
+// Tres sitios: / (visitantes: comprar y ver entradas), /staffGt (escáner) y /adminGt
 // Cada evento tiene su URL pública /e/<slug>, que abre directo su compra
+// Los sitios del personal no se indexan (buscadores): se pide no listarlos ni seguir sus links.
+// No se usa robots.txt a propósito: listaría las direcciones que se quieren discretas
+app.use(/^\/(adminGt|organizadorGt|staffGt)(\/|$)/i,(req, res, next) => {
+  res.set("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet");
+  next();
+});
 app.get("/e/:slug", (req, res) => {
   res.sendFile(path.join(__dirname, "..", "frontend", "index.html"));
 });

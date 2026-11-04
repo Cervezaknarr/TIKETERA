@@ -183,6 +183,24 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - [ ] Modo sin conexión en el escáner (el backend ya lo soporta).
 - [ ] Probar `/staff` en celulares reales (Android e iPhone) y `/admin` en el navegador antes de la fiesta.
 
+### Post-fiesta: endurecer el login (H-03 de PLAN.md / T1.14 a T1.19 de TAREAS.md) [SEGURIDAD]
+Decisión del usuario (2026-11-04): por ahora la app es para un solo evento, así que NO se implementa el endurecimiento completo; queda para la etapa posterior a la fiesta. Lo que falta, para retomarlo:
+- MFA TOTP obligatorio para admin y organizador (staff opcional) con códigos de recuperación; hoy entra cualquiera que tenga email y clave.
+- Claves de 12+ caracteres con lista de claves comunes (hoy el mínimo es 8, `MIN_PASSWORD_LENGTH` en `userController.js`) y bcrypt coste 12 (hoy 10, `models/User.js`).
+- Bloqueo por cuenta (5 fallos → 15 min, se duplica hasta 24 h; hoy solo hay límite por IP) y mismo 401 para cuenta inexistente / clave mala / rol sin acceso / bloqueada, con hash ficticio para igualar tiempos (hoy "sin rol" responde 403 y la cuenta inexistente responde más rápido).
+- Decisiones pendientes: quién recupera el acceso si el admin pierde el celular (plan: códigos de recuperación y, último recurso, reseteo desde la consola de Render) y si el staff usa MFA.
+- Mientras tanto se usan direcciones renombradas (ver abajo) y claves largas elegidas a mano.
+
+### Post-fiesta: pendientes que se dejaron a propósito (decisión del usuario, 2026-11-04)
+Nada de esto bloquea el evento. Detalle de cada tarea en TAREAS.md.
+- **Login (H-03, T1.14 a T1.19):** ver la sección de arriba (MFA, claves de 12, bloqueo por cuenta).
+- **Firma del webhook de Mercado Pago (T2.11 y T2.12):** hoy el webhook no confía en el aviso (consulta el estado real a la API de Mercado Pago) y exige que la cuenta de la URL sea la de la compra (H-01, hecho). La firma `x-signature` sería una tercera capa. Cuesta una columna nueva (`PaymentAccount.webhookSecretEnc`), el secreto en el panel de Mercado Pago y un campo en Pagos; empezar con la firma opcional (aviso en el log) para no dejar de confirmar pagos si se configura mal. La cuenta de Mercado Pago es REAL desde hace tiempo (los textos viejos que dicen "prueba" están desactualizados).
+- **Sesiones (T2.03 y T2.04):** JWT con emisor, audiencia y duración por rol, logout y cerrar todas las sesiones. Cierra las sesiones abiertas y toca el frontend: no hacerlo con ventas o puerta en curso.
+- **Resto de la Ola 2:** secretos v2 con rotación (T2.09 y T2.10), TLS verificado a Postgres (T2.05 y T2.06, probar en Render), validación de secretos al arrancar (T2.20, solo como aviso), CSP estricta sin JavaScript en línea (T2.01 y T2.02).
+- **T3.01 y T3.02:** el listado de compradores devuelve el link privado (`accessToken`) de cada compra; pasarlo a un endpoint aparte (toca el botón «Copiar link» del frontend).
+- **Infraestructura y documentos:** migraciones con Umzug, CI, backups y simulacro de restauración, Node fijado, `render.yaml` completo y la Ola 4 documental.
+- **Seguridad menor sin hacer:** captcha en el checkout y verificación del certificado de la base.
+
 ### Futuro
 - [ ] **Varios organizadores:** hoy hay un solo evento de un organizador externo. Con más organizadores, pasar a Marketplace de Mercado Pago: cada organizador vincula su cuenta y cada venta va directo a él, con comisión automática. Implica guardar en cada evento a qué cuenta de pago corresponde, usar esas credenciales en `createPayment` y una pantalla de "Vincular Mercado Pago".
 - [ ] Nave: si se consigue CUIT, pedir credenciales a integraciones@navenegocios.com (CUIT, código de vinculación de Nave > Integraciones > Tienda Online Propia, dos `notification_url`)
@@ -255,3 +273,18 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
   - `lastResend` (reenvío de entradas) sigue en memoria, sin tope por usuario ni limpieza (H-18, T3.10); el link de entradas (`accessToken`) no vence y vive en `localStorage` del comprador.
   - Latencia del check-in con carga no medida; frontend de anulación solo con `node --check`, sin probar en el navegador.
   - **Antes de desplegar (D0):** copia de la base, sin ventas en curso, ensayo en Postgres local con una compra `pending` previa, y recién entonces `DB_SYNC_ALTER=false`. Las tareas T1.28–T1.32 son `[SEGURIDAD]`: quedan «hechas», **pendientes de aprobación del usuario**.
+
+### Direcciones renombradas: /adminGt, /organizadorGt, /staffGt (2026-11-04, sin desplegar) [SEGURIDAD: discreción, no reemplaza el login]
+- Las carpetas de `frontend/` pasaron de `admin`, `organizador` y `staff` a `adminGt`, `organizadorGt` y `staffGt`; las direcciones viejas responden 404. Sin variables de entorno ni código en el servidor (se probó una versión con `ADMIN_PATH`/`ORGANIZER_PATH`/`STAFF_PATH` y se descartó). Los enlaces entre sitios y los textos del panel se actualizaron.
+- Límite: ocultar la dirección no protege la API. `POST /api/auth/login` sigue público; la defensa real son las claves largas y al azar que elige el admin, más el límite por IP (30 cada 15 min). Si hace falta más discreción, cambiar el sufijo `Gt` por algo menos obvio renombrando las carpetas.
+- Avisar a quienes ya tenían guardadas las direcciones viejas (admin, organizadores, staff).
+
+### Endurecimiento menor del backend (2026-11-04, sin desplegar) [SEGURIDAD]
+Tareas del plan del otro dev (TAREAS.md): T2.07 (parcial), T2.13, T2.22, T3.03, T3.04, T3.05 y parte de T3.06. Sin tocar Mercado Pago ni el modelo de datos.
+- **Sync del escáner (T2.07):** ya no envía `buyerEmail`. Sigue enviando `buyerName` A PROPÓSITO (el staff lo ve en la puerta para comprobar el DNI): el criterio de aceptación de T2.07 que pide quitarlo no se aplica por decisión del usuario.
+- **Límites por IP (T2.13 y /tickets):** webhook 300 por minuto (`RATE_LIMIT_WEBHOOK_MAX`) y link privado de la compra 120 cada 10 min (`RATE_LIMIT_TICKETS_MAX`); 0 = sin límite. No se acotó el cuerpo del webhook por ruta.
+- **`ensureAdmin` (T3.03):** solo crea el admin si no existe ninguno y el email no está usado; nunca asciende una cuenta existente. Con esto `ADMIN_EMAIL`/`ADMIN_PASSWORD` se pueden borrar de Render.
+- **API pública (T3.04):** los eventos ya no incluyen `userId` ni el nombre del admin (`User`) para visitantes; el admin sí los ve.
+- **Escaneos (T3.05):** un id de escaneo que ya existe en OTRO evento no se devuelve ni se modifica (resultado `invalid`).
+- **Validaciones (T3.06 parcial):** `deviceId` hasta 64 caracteres; `buyerEmail` string, formato válido y hasta 254. Falta el límite de cuerpo JSON por ruta y la lista blanca de `status`.
+- **`/health` (T2.22):** hace `SELECT 1` con tope de 2 s; responde `{"status":"ok"}` o 503 `{"status":"degraded"}`, sin entorno ni versión (Render lo usa como healthCheckPath).

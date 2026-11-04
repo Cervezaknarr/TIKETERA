@@ -1,4 +1,4 @@
-/* Estilos compartidos por los tres sitios: público (/), staff (/staff) y admin (/admin) */
+/* Estilos compartidos por los tres sitios: público (/), staff y admin */
 :root { --bg:#f6f7fb; --card:#fff; --text:#1c1e26; --muted:#6b7080; --accent:#5b4cf0; --border:#e4e6ee; --ok:#1a8a4a; --err:#c62f3b; }
 @media (prefers-color-scheme: dark) {
   :root { --bg:#14151b; --card:#1d1f28; --text:#eceef5; --muted:#9a9fb2; --accent:#8b7fff; --border:#2c2f3b; --ok:#4cc982; --err:#ff6b76; }

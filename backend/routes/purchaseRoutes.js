@@ -10,12 +10,13 @@ const {
   voidPurchaseFromPanel,
 } = require("../controllers/purchaseController");
 const { protect, eventManager } = require("../middleware/authMiddleware");
+const { webhookLimiter, ticketLinkLimiter } = require("../middleware/rateLimit");
 
 // Rutas públicas
 router.get("/status", getSalesStatus);
 router.post("/checkout", createCheckoutSession);
-router.post("/webhook", handlePaymentWebhook);
-router.get("/tickets/:accessToken", getPurchaseTickets);
+router.post("/webhook", webhookLimiter(), handlePaymentWebhook);
+router.get("/tickets/:accessToken", ticketLinkLimiter(), getPurchaseTickets);
 
 // Compradores de un evento: el admin o el organizador de ese evento
 router.get("/event/:eventId", protect, eventManager, getEventPurchases);

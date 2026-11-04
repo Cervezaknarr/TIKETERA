@@ -27,7 +27,6 @@ const serializeTicket = (ticket) => ({
   usedByDevice: ticket.usedByDevice,
   holderName: ticket.holderName,
   buyerName: ticket.Purchase ? ticket.Purchase.buyerName : null,
-  buyerEmail: ticket.Purchase ? ticket.Purchase.buyerEmail : null,
 });
 
 /**
@@ -38,6 +37,9 @@ const serializeTicket = (ticket) => ({
 const applyScan = async ({ scan, eventId, deviceId, staffUserId }) => {
   const existing = await Scan.findByPk(scan.id, { include: [Ticket] });
   if (existing) {
+    // Un escaneo de OTRO evento no se devuelve ni se toca: para este evento es inválido
+    // (no es un reenvío, así que se audita como rechazo)
+    if (existing.eventId !== eventId) return { result: "invalid", ticket: null };
     return { result: existing.result, ticket: existing.Ticket, replayed: true };
   }
 
@@ -89,7 +91,10 @@ const applyScan = async ({ scan, eventId, deviceId, staffUserId }) => {
     // Dos requests con el mismo escaneo en paralelo: la otra ya lo guardó
     if (error instanceof UniqueConstraintError) {
       const saved = await Scan.findByPk(scan.id, { include: [Ticket] });
-      if (saved) return { result: saved.result, ticket: saved.Ticket, replayed: true };
+      if (saved) {
+        if (saved.eventId !== eventId) return { result: "invalid", ticket: null };
+        return { result: saved.result, ticket: saved.Ticket, replayed: true };
+      }
     }
     throw error;
   }
@@ -109,10 +114,10 @@ const syncCheckin = async (req, res) => {
     const { eventId } = req.params;
     const { deviceId, since, scans = [] } = req.body;
 
-    if (!deviceId || typeof deviceId !== "string") {
+    if (!deviceId || typeof deviceId !== "string" || deviceId.length > 64) {
       return res.status(400).json({
         success: false,
-        message: "deviceId es requerido",
+        message: "deviceId es requerido (hasta 64 caracteres)",
       });
     }
 
@@ -211,7 +216,7 @@ const syncCheckin = async (req, res) => {
 
     const tickets = await Ticket.findAll({
       where,
-      include: [{ model: Purchase, attributes: ["buyerName", "buyerEmail"] }],
+      include: [{ model: Purchase, attributes: ["buyerName"] }],
       order: [["updatedAt", "ASC"]],
     });
 

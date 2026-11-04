@@ -24,7 +24,7 @@
 const auth = createSession('organizer');
 onUnauthorized = () => { logout(); flash('La sesión venció. Volvé a ingresar.', 'err'); };
 
-// El escáner (/staff) tiene su propia sesión: se comparte la del organizador para no
+// El escáner (/staffGt) tiene su propia sesión: se comparte la del organizador para no
 // pedirle la contraseña dos veces. Es la misma cuenta y el servidor limita sus eventos
 const STAFF_KEY = 'ticketera_session_staff';
 function shareWithScanner(token, user) {
@@ -38,7 +38,7 @@ function renderNav() {
   $('nav').innerHTML = session.user
     ? `<span class="muted">${esc(session.user.name)}</span>
        <button class="ghost" onclick="go('events')">Mis eventos</button>
-       <a href="/staff/" class="ghost-link">Escáner</a>
+       <a href="/staffGt/" class="ghost-link">Escáner</a>
        <button onclick="logout()">Salir</button>`
     : '';
 }
@@ -190,7 +190,7 @@ async function viewStaff(eventId) {
   <h2>Staff · ${esc(event.title)}</h2>
   <div class="card" style="margin-bottom:14px">
     <h3>Agregar staff</h3>
-    <p class="muted">Entra a <b>${esc(location.origin)}/staff</b> con su email y contraseña y solo puede escanear las entradas de <b>este evento</b>${myEvents.length > 1 ? ' y de los otros que marques abajo' : ''}.</p>
+    <p class="muted">Entra a <b>${esc(location.origin)}/staffGt</b> con su email y contraseña y solo puede escanear las entradas de <b>este evento</b>${myEvents.length > 1 ? ' y de los otros que marques abajo' : ''}.</p>
     <form onsubmit="submitStaff(event, '${eventId}')">
       <div class="row">
         <div><label>Nombre</label><input id="uName" required placeholder="Puerta 1"></div>

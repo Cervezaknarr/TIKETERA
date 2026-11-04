@@ -1,4 +1,4 @@
-// Utilidades compartidas por los tres sitios: público (/), staff (/staff) y admin (/admin).
+// Utilidades compartidas por los tres sitios: público (/), staff y admin.
 // El backend sirve estas páginas, así que la API está en el mismo origen
 const API = (localStorage.getItem('ticketera_api') || location.origin) + '/api';
 const $ = (id) => document.getElementById(id);
