@@ -182,27 +182,32 @@ _(T1.20: número reservado, sin tarea asignada.)_
 - **Aceptación:** cada runbook indica cómo se detecta (código de log), pasos en el panel de MP y en `/admin`, cómo se verifica la resolución y qué se registra; `revisor-docs` lo contrasta con el código.
 
 ### T1.28 — Webhook fail-closed ante cuenta desconocida [SEGURIDAD]
-- **Agente:** dev-backend · **Severidad:** Alta · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Alta · **Estado:** cerrada (aprobada por el usuario el 2026-11-04)
 - **Descripción:** `handlePaymentWebhook` trataba la falta de `accountId` como válida. Ahora, si la pasarela (que no sea `mock`) no devuelve la clave `accountId`, es mismatch (404, `WEBHOOK_ACC_MISMATCH`, auditoría). `mock` y `nave` devuelven `accountId: null` explícito.
 - **Decisión/deuda:** los stubs de `payments.test.js` y el `deepEqual` de Nave se ajustaron (añaden `accountId: null`); cualquier pasarela nueva debe informar `accountId`. Tests en `audit.test.js`.
+- **Aprobación:** el usuario aprobó la tarea el 2026-11-04, con el código ya desplegado en `prod` (`d64c1b4`). Las correcciones posteriores a la revisión del `revisor` (motivo enmascarado, patrón de ruta en `ACCESS_DENIED`, `bulkCreate` en check-in) no pasaron por una segunda revisión formal.
 
 ### T1.29 — Auditoría estricta en acciones de dinero [SEGURIDAD]
-- **Agente:** dev-backend · **Severidad:** Alta · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Alta · **Estado:** cerrada (aprobada por el usuario el 2026-11-04)
 - **Descripción:** `audit(req, { strict: true, transaction })` inserta dentro de la transacción y lanza si falla (sin `transaction` también lanza). Aplicado a `PURCHASE_VOID` (movido dentro de la transacción), `PURCHASE_VOID_AUTO` (webhook) y `PAYMENT_ACCOUNT_CREATE/ACTIVATE/DELETE` (admin y organizador, mutación + audit en una transacción). Si el audit falla: rollback y 500. Tests en `audit.test.js` y `refunds.test.js`.
 - **Deuda:** el resto de las acciones sigue siendo no estricto (SALES_PAUSE, USER_*, etc.).
+- **Aprobación:** el usuario aprobó la tarea el 2026-11-04, con el código ya desplegado en `prod` (`d64c1b4`). Las correcciones posteriores a la revisión del `revisor` (motivo enmascarado, patrón de ruta en `ACCESS_DENIED`, `bulkCreate` en check-in) no pasaron por una segunda revisión formal.
 
 ### T1.30 — Ampliar auditoría: check-in, accesos denegados, pago confirmado [SEGURIDAD]
-- **Agente:** dev-backend · **Severidad:** Media · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Media · **Estado:** cerrada (aprobada por el usuario el 2026-11-04)
 - **Descripción:** `CHECKIN_OK` / `CHECKIN_REJECTED` (result success / denied para duplicada o anulada / failure para código inválido; un solo insert por sync, sin lecturas extra; los reenvíos idempotentes no se re-auditan; sin código ni datos del comprador). `ACCESS_DENIED` en cada 403 de `authMiddleware.js` (actor + `details.method` y `details.route` = patrón de la ruta, p. ej. `/api/organizer/events/:eventId/payments`, o `<baseUrl>/*` si no hay `req.route`; nunca la URL concreta). El check-in audita con un único `AuditLog.bulkCreate` al final del sync (fuera de transacciones, no estricto). En modo strict la línea de stdout sale en `afterCommit`. `PAYMENT_CONFIRMED` (actor null) tras el commit del webhook.
 - **Pendiente:** logout — no existe endpoint de logout (JWT sin estado en el cliente), no se inventó; si se agrega, auditar `LOGOUT`.
+- **Aprobación:** el usuario aprobó la tarea el 2026-11-04, con el código ya desplegado en `prod` (`d64c1b4`). Las correcciones posteriores a la revisión del `revisor` (motivo enmascarado, patrón de ruta en `ACCESS_DENIED`, `bulkCreate` en check-in) no pasaron por una segunda revisión formal.
 
 ### T1.31 — Anulación manual con motivo obligatorio [SEGURIDAD]
-- **Agente:** dev-backend · **Severidad:** Media · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Media · **Estado:** cerrada (aprobada por el usuario el 2026-11-04)
 - **Descripción:** `POST /api/purchases/event/:eventId/:purchaseId/void` exige body `{ reason: string }` (trim, 3 a 200 caracteres); si no, 400 «Indicá el motivo de la anulación (entre 3 y 200 caracteres)». La validación 3 a 200 va sobre el texto original; en `details.reason` de `PURCHASE_VOID` se guarda enmascarado (`scrubFreeText`: emails con `maskEmail` y toda secuencia de 7 o más dígitos, aunque lleve puntos, guiones o espacios, pasa a `***`). El frontend ya pide el motivo.
+- **Aprobación:** el usuario aprobó la tarea el 2026-11-04, con el código ya desplegado en `prod` (`d64c1b4`). Las correcciones posteriores a la revisión del `revisor` (motivo enmascarado, patrón de ruta en `ACCESS_DENIED`, `bulkCreate` en check-in) no pasaron por una segunda revisión formal.
 
 ### T1.32 — Enmascarar el email en la respuesta del reenvío [SEGURIDAD]
-- **Agente:** dev-backend · **Severidad:** Baja · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Baja · **Estado:** cerrada (aprobada por el usuario el 2026-11-04)
 - **Descripción:** `resendPurchaseEmail` responde «Entradas enviadas a a***@dominio.com» (`maskEmail`). Ojo: si el frontend mostraba el mensaje esperando el email completo, ahora ve el enmascarado.
+- **Aprobación:** el usuario aprobó la tarea el 2026-11-04, con el código ya desplegado en `prod` (`d64c1b4`). Las correcciones posteriores a la revisión del `revisor` (motivo enmascarado, patrón de ruta en `ACCESS_DENIED`, `bulkCreate` en check-in) no pasaron por una segunda revisión formal.
 
 ### T1.33 — Cuentas de pago: chequeos de borrado dentro de la transacción
 - **Agente:** dev-backend · **Severidad:** Media · **Estado:** pendiente
@@ -266,10 +271,11 @@ _(T1.20: número reservado, sin tarea asignada.)_
 - **Aceptación:** test de configuración por entorno; `test/database.test.js` actualizado; conexión probada contra Postgres local con certificado propio y CA.
 
 ### T2.07 — Sync del escáner sin datos personales [SEGURIDAD]
-- **Agente:** dev-backend · **Hallazgos:** H-07 · **Severidad:** Media · **Dependencias:** cierre de Ola 1 ‖ · **Estado:** hecha parcial, pendiente de aprobación [SEGURIDAD]
+- **Agente:** dev-backend · **Hallazgos:** H-07 · **Severidad:** Media · **Dependencias:** cierre de Ola 1 ‖ · **Estado:** hecha parcial (lo hecho, aprobado por el usuario el 2026-11-04; sigue abierta)
 - **Descripción:** `checkinController.js` l. 318-326 y 491-494: el sync devuelve solo código, estado, lote y hashes necesarios para validar sin conexión; sin nombre ni email. El escaneo en línea puede devolver solo el nombre de pila del titular de esa entrada (sin email).
 - **Aceptación:** `checkin.test.js` verifica que ninguna respuesta de `/api/checkin/*` incluye `buyerEmail` y que el sync no incluye `buyerName`.
 - **Nota (otro dev, 2026-11-04):** El sync del escáner ya no envía `buyerEmail` (commit `e4877c1`, `checkin.test.js`). `buyerName` SE MANTIENE por decisión del usuario (el staff lo ve en la puerta para comprobar el DNI): el criterio «el sync no incluye `buyerName`» no se aplica. Falta revisar las demás respuestas de `/api/checkin/*` y T2.08 (el escáner no guarda emails).
+- **Aprobación:** se aprueba lo implementado (sync sin `buyerEmail`); la tarea sigue abierta por el resto de las respuestas de `/api/checkin/*` y T2.08.
 
 ### T2.08 — Escáner adaptado al sync sin PII
 - **Agente:** dev-frontend · **Hallazgos:** H-07 · **Severidad:** Media · **Dependencias:** T2.07, T2.01 · **Estado:** pendiente
@@ -374,22 +380,25 @@ _(T1.20: número reservado, sin tarea asignada.)_
 - **Aceptación:** recorrido manual; CSV sin tokens.
 
 ### T3.03 — Sin promoción a admin por `ADMIN_EMAIL` [SEGURIDAD]
-- **Agente:** dev-backend · **Hallazgos:** H-12 · **Severidad:** Baja · **Dependencias:** cierre de Ola 2 ‖ · **Estado:** hecha parcial, pendiente de aprobación [SEGURIDAD]
+- **Agente:** dev-backend · **Hallazgos:** H-12 · **Severidad:** Baja · **Dependencias:** cierre de Ola 2 ‖ · **Estado:** hecha parcial (lo hecho, aprobado por el usuario el 2026-11-04; sigue abierta)
 - **Descripción:** `utils/admin.js`: crear el admin solo si no existe ningún admin y el email no existe; nunca promover una cuenta existente; registrar en auditoría. Habilita M-05 (borrar `ADMIN_EMAIL`/`ADMIN_PASSWORD`).
 - **Aceptación:** tests: con admin existente no hace nada; con email de un staff no lo promueve.
 - **Nota (otro dev, 2026-11-04):** `ensureAdmin` solo crea el primer admin y nunca asciende cuentas existentes (commit `e4877c1`, test en `roles.test.js`). Falta registrar la creación en el AuditLog. M-05 (borrar `ADMIN_EMAIL`/`ADMIN_PASSWORD` de Render) queda habilitada.
+- **Aprobación:** se aprueba lo implementado (`ensureAdmin` no asciende cuentas); la tarea sigue abierta por el registro en el `AuditLog`.
 
 ### T3.04 — API pública sin datos de usuarios [SEGURIDAD]
-- **Agente:** dev-backend · **Hallazgos:** H-13 · **Severidad:** Baja · **Dependencias:** ‖ · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
+- **Agente:** dev-backend · **Hallazgos:** H-13 · **Severidad:** Baja · **Dependencias:** ‖ · **Estado:** cerrada (aprobada por el usuario el 2026-11-04)
 - **Descripción:** quitar `userId` y nombre del admin de las respuestas públicas de eventos (`withLots` y relacionados).
 - **Aceptación:** test sobre `GET /api/events` y `GET /api/events/:id` sin esos campos.
 - **Nota (otro dev, 2026-11-04):** La API pública de eventos ya no expone `userId` ni el nombre del admin; el admin sí los ve (commit `e4877c1`, test en `roles.test.js`).
+- **Aprobación:** aprobada por el usuario el 2026-11-04; ya desplegada en `prod`.
 
 ### T3.05 — Scan acotado por evento [SEGURIDAD]
-- **Agente:** dev-backend · **Hallazgos:** H-14 · **Severidad:** Baja · **Dependencias:** ‖ (no en paralelo con otras tareas sobre `checkinController.js`) · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
+- **Agente:** dev-backend · **Hallazgos:** H-14 · **Severidad:** Baja · **Dependencias:** ‖ (no en paralelo con otras tareas sobre `checkinController.js`) · **Estado:** cerrada (aprobada por el usuario el 2026-11-04)
 - **Descripción:** `checkinController.js` l. 333-337: buscar el `Scan` por `id` **y** `eventId`.
 - **Aceptación:** test: un scan de otro evento no se encuentra ni se modifica.
 - **Nota (otro dev, 2026-11-04):** Un escaneo que ya existe en otro evento no se devuelve ni se modifica (resultado `invalid`); test en `checkin.test.js` (commit `e4877c1`). Tras el merge con la auditoría se registra como `CHECKIN_REJECTED`, no como reenvío.
+- **Aprobación:** aprobada por el usuario el 2026-11-04; ya desplegada en `prod`.
 
 ### T3.06 — Validación de entradas
 - **Agente:** dev-backend · **Hallazgos:** H-15 · **Severidad:** Baja · **Dependencias:** ‖ · **Estado:** hecha parcial
