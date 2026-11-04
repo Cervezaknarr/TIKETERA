@@ -194,8 +194,8 @@ async function viewStaff(eventId) {
       <label>Contraseña (mínimo 8 caracteres)</label>
       <input id="uPass" type="text" required minlength="8" autocomplete="new-password">
       ${myEvents.length > 1 ? `<label>También en estos eventos</label>
-      <div class="card" style="max-height:160px;overflow:auto;padding:8px 12px">${myEvents.filter(e => e.id !== eventId).map(e => `
-        <label style="display:block;font-weight:normal"><input type="checkbox" name="uEv" value="${e.id}"> ${esc(e.title)}</label>`).join('')}</div>` : ''}
+      <div class="check-list">${myEvents.filter(e => e.id !== eventId).map(e => `
+        <label class="check-item"><input type="checkbox" name="uEv" value="${e.id}"><span>${esc(e.title)}</span></label>`).join('')}</div>` : ''}
       <p><button>Agregar</button></p>
     </form>
   </div>

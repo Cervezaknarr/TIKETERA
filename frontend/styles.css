@@ -17,6 +17,11 @@ label { display:block; font-size:.85rem; color:var(--muted); margin:10px 0 4px; 
 .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:14px; }
 .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; }
 .card h3 { margin:0 0 6px; }
+/* Lista de casillas (p. ej. eventos de un staff): casilla y nombre en la misma línea, centrados */
+.check-list { max-height:200px; overflow:auto; padding:6px 8px; border:1px solid var(--border); border-radius:10px; background:var(--bg); }
+.check-list .check-item { display:flex; align-items:center; gap:10px; margin:0; padding:8px 10px; border-radius:8px; font-size:.95rem; color:var(--text); cursor:pointer; }
+.check-list .check-item:hover { background:var(--card); }
+.check-list .check-item input { width:18px; height:18px; flex:none; margin:0; padding:0; accent-color:var(--accent, #7c5cff); cursor:pointer; }
 .muted { color:var(--muted); font-size:.9rem; }
 .price { font-weight:700; color:var(--accent); margin:8px 0; }
 .msg { padding:10px 12px; border-radius:8px; margin-bottom:12px; font-size:.9rem; }
