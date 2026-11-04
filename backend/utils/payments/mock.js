@@ -25,6 +25,7 @@ module.exports = {
     if (!paymentGatewayId || !["approved", "rejected", "pending", "refunded"].includes(status)) {
       return null;
     }
-    return { gatewayId: paymentGatewayId, status };
+    // accountId null explícito: el mock no usa cuentas (el controlador falla cerrado si falta la clave)
+    return { gatewayId: paymentGatewayId, status, accountId: null };
   },
 };

@@ -210,6 +210,7 @@ module.exports = {
     const status = STATUS_MAP[payment.status && payment.status.name];
     if (!payment.external_payment_id || !status) return null;
 
-    return { gatewayId: String(payment.external_payment_id), status };
+    // Nave no usa cuentas de Mercado Pago: accountId null explícito (las compras tienen null)
+    return { gatewayId: String(payment.external_payment_id), status, accountId: null };
   },
 };

@@ -101,7 +101,8 @@ test("el admin reenvía las entradas al email del comprador", async () => {
   const res = await resend(admin, eventA.id, purchase.id);
 
   assert.equal(res.status, 200);
-  assert.match(res.body.message, /ana@test\.com/);
+  assert.match(res.body.message, /a\*\*\*@test\.com/);
+  assert.ok(!res.body.message.includes("ana@test.com"));
   assert.equal(emails.length, before + 1);
   assert.equal(emails.at(-1).to, "ana@test.com");
   assert.match(emails.at(-1).html, /\/#\/entradas\//);

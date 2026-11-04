@@ -155,6 +155,7 @@ test("el webhook usa el estado verificado por la pasarela, no el del body", asyn
     resolveWebhook: async (req) => ({
       gatewayId: req.body.paymentGatewayId,
       status: "rejected",
+      accountId: null,
     }),
   });
   const event = await newEvent(10);
@@ -308,7 +309,7 @@ test("el webhook de Nave consulta el pago y mapea su estado", async () => {
       naveApi({ body: { external_payment_id: "compra-1", status: { name: naveStatus } } }),
       async (calls) => {
         const result = await nave.resolveWebhook(notification);
-        assert.deepEqual(result, { gatewayId: "compra-1", status: expected }, naveStatus);
+        assert.deepEqual(result, { gatewayId: "compra-1", status: expected, accountId: null }, naveStatus);
         // Solo se llama a la API de Nave, nunca al payment_check_url del body
         assert.ok(calls.every((c) => !c.url.includes("evil.test")));
       }
@@ -480,7 +481,7 @@ const approvingProvider = () =>
       gatewayId: `fake_${purchase.id}`,
       checkoutUrl: "https://pasarela.test/pagar",
     }),
-    resolveWebhook: async (req) => ({ gatewayId: req.body.id, status: "approved" }),
+    resolveWebhook: async (req) => ({ gatewayId: req.body.id, status: "approved", accountId: null }),
   });
 
 // Hace que una compra parezca creada hace `minutes` minutos

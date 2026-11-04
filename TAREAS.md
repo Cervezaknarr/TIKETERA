@@ -181,6 +181,49 @@ _(T1.20: número reservado, sin tarea asignada.)_
 - **Descripción:** `docs/seguridad/plan-incidentes.md` (roles, severidades, detección, contención, comunicación a compradores/organizadores, notificación a la AAIP según Ley 25.326 cuando aplique, conservación de evidencia, lecciones aprendidas, registro de incidentes). Runbooks en `docs/runbooks/`: `pago-aprobado-sin-cupo.md`, `pago-monto-distinto.md`, `compra-devuelta-contracargo.md`, `webhook-cuenta-no-coincide.md`, `credencial-comprometida.md`.
 - **Aceptación:** cada runbook indica cómo se detecta (código de log), pasos en el panel de MP y en `/admin`, cómo se verifica la resolución y qué se registra; `revisor-docs` lo contrasta con el código.
 
+### T1.28 — Webhook fail-closed ante cuenta desconocida [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Alta · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
+- **Descripción:** `handlePaymentWebhook` trataba la falta de `accountId` como válida. Ahora, si la pasarela (que no sea `mock`) no devuelve la clave `accountId`, es mismatch (404, `WEBHOOK_ACC_MISMATCH`, auditoría). `mock` y `nave` devuelven `accountId: null` explícito.
+- **Decisión/deuda:** los stubs de `payments.test.js` y el `deepEqual` de Nave se ajustaron (añaden `accountId: null`); cualquier pasarela nueva debe informar `accountId`. Tests en `audit.test.js`.
+
+### T1.29 — Auditoría estricta en acciones de dinero [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Alta · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
+- **Descripción:** `audit(req, { strict: true, transaction })` inserta dentro de la transacción y lanza si falla (sin `transaction` también lanza). Aplicado a `PURCHASE_VOID` (movido dentro de la transacción), `PURCHASE_VOID_AUTO` (webhook) y `PAYMENT_ACCOUNT_CREATE/ACTIVATE/DELETE` (admin y organizador, mutación + audit en una transacción). Si el audit falla: rollback y 500. Tests en `audit.test.js` y `refunds.test.js`.
+- **Deuda:** el resto de las acciones sigue siendo no estricto (SALES_PAUSE, USER_*, etc.).
+
+### T1.30 — Ampliar auditoría: check-in, accesos denegados, pago confirmado [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Media · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
+- **Descripción:** `CHECKIN_OK` / `CHECKIN_REJECTED` (result success / denied para duplicada o anulada / failure para código inválido; un solo insert por sync, sin lecturas extra; los reenvíos idempotentes no se re-auditan; sin código ni datos del comprador). `ACCESS_DENIED` en cada 403 de `authMiddleware.js` (actor + `details.method` y `details.route` = patrón de la ruta, p. ej. `/api/organizer/events/:eventId/payments`, o `<baseUrl>/*` si no hay `req.route`; nunca la URL concreta). El check-in audita con un único `AuditLog.bulkCreate` al final del sync (fuera de transacciones, no estricto). En modo strict la línea de stdout sale en `afterCommit`. `PAYMENT_CONFIRMED` (actor null) tras el commit del webhook.
+- **Pendiente:** logout — no existe endpoint de logout (JWT sin estado en el cliente), no se inventó; si se agrega, auditar `LOGOUT`.
+
+### T1.31 — Anulación manual con motivo obligatorio [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Media · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
+- **Descripción:** `POST /api/purchases/event/:eventId/:purchaseId/void` exige body `{ reason: string }` (trim, 3 a 200 caracteres); si no, 400 «Indicá el motivo de la anulación (entre 3 y 200 caracteres)». La validación 3 a 200 va sobre el texto original; en `details.reason` de `PURCHASE_VOID` se guarda enmascarado (`scrubFreeText`: emails con `maskEmail` y toda secuencia de 7 o más dígitos, aunque lleve puntos, guiones o espacios, pasa a `***`). El frontend ya pide el motivo.
+
+### T1.32 — Enmascarar el email en la respuesta del reenvío [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Baja · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
+- **Descripción:** `resendPurchaseEmail` responde «Entradas enviadas a a***@dominio.com» (`maskEmail`). Ojo: si el frontend mostraba el mensaje esperando el email completo, ahora ve el enmascarado.
+
+### T1.33 — Cuentas de pago: chequeos de borrado dentro de la transacción
+- **Agente:** dev-backend · **Severidad:** Media · **Estado:** pendiente
+- **Descripción:** en `organizerController.js` (`deleteAccount`, ~345-353) y `paymentAccountController.js` (`deletePaymentAccount`, ~175) los chequeos (cuenta activa, compras que la usan) se hacen antes y fuera de la transacción: mover dentro con lock `UPDATE` para evitar la carrera con un checkout/activación concurrente.
+
+### T1.34 — Auditar PAYMENT_REJECTED
+- **Agente:** dev-backend · **Severidad:** Baja · **Estado:** pendiente
+- **Descripción:** registrar los pagos rechazados/cancelados del webhook (hoy solo se auditan confirmados, anulaciones, monto distinto, sin cupo y cuenta distinta).
+
+### T1.35 — Auditoría de logout [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Baja · **Estado:** pendiente (bloqueada: no existe endpoint de logout)
+- **Descripción:** auditar `LOGOUT` cuando exista el endpoint.
+
+### T1.36 — Auditoría estricta para SALES_* y USER_* [SEGURIDAD]
+- **Agente:** dev-backend · **Severidad:** Media · **Estado:** pendiente
+- **Descripción:** pasar `SALES_PAUSE/RESUME` (general y por evento) y `USER_CREATE/UPDATE/DELETE` a `strict` con la mutación en la misma transacción.
+
+### T1.37 — Documentar que PAYMENT_CONFIRMED no es estricta
+- **Agente:** documentador · **Severidad:** Baja · **Estado:** pendiente
+- **Descripción:** dejar asentado en la documentación de auditoría que `PAYMENT_CONFIRMED` se registra tras el commit y no es strict por decisión: no se debe revertir un pago ya cobrado ni emitir entradas por un fallo del log; el aviso queda en `AUDIT_WRITE_FAILED`.
+
 ### Cierre de la Ola 1
 - **T1.90** tester — regresión completa, criterios de T1.01–T1.27, ensayo de D1 en Postgres local (baseline + 0002–0004 sobre la base de T1.07). Deps: todas las anteriores. Estado: pendiente.
 - **T1.91** revisor — revisión del diff de la ola, con foco en T1.01, T1.03, T1.12, T1.15, T1.16. Deps: T1.90. Estado: pendiente.
@@ -223,9 +266,10 @@ _(T1.20: número reservado, sin tarea asignada.)_
 - **Aceptación:** test de configuración por entorno; `test/database.test.js` actualizado; conexión probada contra Postgres local con certificado propio y CA.
 
 ### T2.07 — Sync del escáner sin datos personales [SEGURIDAD]
-- **Agente:** dev-backend · **Hallazgos:** H-07 · **Severidad:** Media · **Dependencias:** cierre de Ola 1 ‖ · **Estado:** pendiente
+- **Agente:** dev-backend · **Hallazgos:** H-07 · **Severidad:** Media · **Dependencias:** cierre de Ola 1 ‖ · **Estado:** hecha parcial, pendiente de aprobación [SEGURIDAD]
 - **Descripción:** `checkinController.js` l. 318-326 y 491-494: el sync devuelve solo código, estado, lote y hashes necesarios para validar sin conexión; sin nombre ni email. El escaneo en línea puede devolver solo el nombre de pila del titular de esa entrada (sin email).
 - **Aceptación:** `checkin.test.js` verifica que ninguna respuesta de `/api/checkin/*` incluye `buyerEmail` y que el sync no incluye `buyerName`.
+- **Nota (otro dev, 2026-11-04):** El sync del escáner ya no envía `buyerEmail` (commit `e4877c1`, `checkin.test.js`). `buyerName` SE MANTIENE por decisión del usuario (el staff lo ve en la puerta para comprobar el DNI): el criterio «el sync no incluye `buyerName`» no se aplica. Falta revisar las demás respuestas de `/api/checkin/*` y T2.08 (el escáner no guarda emails).
 
 ### T2.08 — Escáner adaptado al sync sin PII
 - **Agente:** dev-frontend · **Hallazgos:** H-07 · **Severidad:** Media · **Dependencias:** T2.07, T2.01 · **Estado:** pendiente
@@ -253,9 +297,10 @@ _(T1.20: número reservado, sin tarea asignada.)_
 - **Aceptación:** recorrido manual; la API nunca devuelve el secreto.
 
 ### T2.13 — Límite de pedidos al webhook
-- **Agente:** dev-backend · **Hallazgos:** H-09 · **Severidad:** Media · **Dependencias:** T2.11 (mismo archivo de rutas) · **Estado:** pendiente
+- **Agente:** dev-backend · **Hallazgos:** H-09 · **Severidad:** Media · **Dependencias:** T2.11 (mismo archivo de rutas) · **Estado:** hecha parcial
 - **Descripción:** límite por IP generoso para `/api/purchases/webhook` (p. ej. 300/min, `RATE_LIMIT_WEBHOOK_MAX`, 0 = sin límite) en `middleware/rateLimit.js`; cuerpo máximo chico.
 - **Aceptación:** test de 429 al superar el límite; webhooks normales no se afectan.
+- **Nota (otro dev, 2026-11-04):** Webhook 300/min (`RATE_LIMIT_WEBHOOK_MAX`) y link privado de la compra 120 cada 10 min (`RATE_LIMIT_TICKETS_MAX`), 0 = sin límite; `webhookLimit.test.js` (commit `e4877c1`). Falta el cuerpo máximo chico por ruta (también pendiente en T3.06).
 
 ### T2.14 — Versión de Node fijada
 - **Agente:** devops · **Hallazgos:** I-06 · **Severidad:** Media · **Dependencias:** — ‖ · **Estado:** pendiente
@@ -298,9 +343,10 @@ _(T1.20: número reservado, sin tarea asignada.)_
 - **Aceptación:** `revisor-docs` lo verifica contra el código; base de M-10.
 
 ### T2.22 — `/health` con comprobación de base
-- **Agente:** dev-backend · **Hallazgos:** I-14 · **Severidad:** Baja · **Dependencias:** — ‖ · **Estado:** pendiente
+- **Agente:** dev-backend · **Hallazgos:** I-14 · **Severidad:** Baja · **Dependencias:** — ‖ · **Estado:** hecha
 - **Descripción:** `server.js` l. 93: `SELECT 1` con timeout de 2 s; 200 `{status:"ok"}` o 503 `{status:"degraded"}`; sin `environment` ni versión.
 - **Aceptación:** test con base disponible y simulando caída.
+- **Nota (otro dev, 2026-11-04):** `/health` hace `SELECT 1` con tope de 2 s; 200 `{status:"ok"}` o 503 `{status:"degraded"}`, sin entorno ni versión (commit `e4877c1`). Falta confirmar que hay un test que simule la caída de la base.
 
 ### T2.23 — Tests y verificación de la ola [SEGURIDAD]
 - **Agente:** tester · **Hallazgos:** H-05, H-06, H-07, H-09, I-12, I-14 · **Severidad:** Media · **Dependencias:** T2.01–T2.22 · **Estado:** pendiente
@@ -328,24 +374,28 @@ _(T1.20: número reservado, sin tarea asignada.)_
 - **Aceptación:** recorrido manual; CSV sin tokens.
 
 ### T3.03 — Sin promoción a admin por `ADMIN_EMAIL` [SEGURIDAD]
-- **Agente:** dev-backend · **Hallazgos:** H-12 · **Severidad:** Baja · **Dependencias:** cierre de Ola 2 ‖ · **Estado:** pendiente
+- **Agente:** dev-backend · **Hallazgos:** H-12 · **Severidad:** Baja · **Dependencias:** cierre de Ola 2 ‖ · **Estado:** hecha parcial, pendiente de aprobación [SEGURIDAD]
 - **Descripción:** `utils/admin.js`: crear el admin solo si no existe ningún admin y el email no existe; nunca promover una cuenta existente; registrar en auditoría. Habilita M-05 (borrar `ADMIN_EMAIL`/`ADMIN_PASSWORD`).
 - **Aceptación:** tests: con admin existente no hace nada; con email de un staff no lo promueve.
+- **Nota (otro dev, 2026-11-04):** `ensureAdmin` solo crea el primer admin y nunca asciende cuentas existentes (commit `e4877c1`, test en `roles.test.js`). Falta registrar la creación en el AuditLog. M-05 (borrar `ADMIN_EMAIL`/`ADMIN_PASSWORD` de Render) queda habilitada.
 
 ### T3.04 — API pública sin datos de usuarios [SEGURIDAD]
-- **Agente:** dev-backend · **Hallazgos:** H-13 · **Severidad:** Baja · **Dependencias:** ‖ · **Estado:** pendiente
+- **Agente:** dev-backend · **Hallazgos:** H-13 · **Severidad:** Baja · **Dependencias:** ‖ · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
 - **Descripción:** quitar `userId` y nombre del admin de las respuestas públicas de eventos (`withLots` y relacionados).
 - **Aceptación:** test sobre `GET /api/events` y `GET /api/events/:id` sin esos campos.
+- **Nota (otro dev, 2026-11-04):** La API pública de eventos ya no expone `userId` ni el nombre del admin; el admin sí los ve (commit `e4877c1`, test en `roles.test.js`).
 
 ### T3.05 — Scan acotado por evento [SEGURIDAD]
-- **Agente:** dev-backend · **Hallazgos:** H-14 · **Severidad:** Baja · **Dependencias:** ‖ (no en paralelo con otras tareas sobre `checkinController.js`) · **Estado:** pendiente
+- **Agente:** dev-backend · **Hallazgos:** H-14 · **Severidad:** Baja · **Dependencias:** ‖ (no en paralelo con otras tareas sobre `checkinController.js`) · **Estado:** hecha, pendiente de aprobación [SEGURIDAD]
 - **Descripción:** `checkinController.js` l. 333-337: buscar el `Scan` por `id` **y** `eventId`.
 - **Aceptación:** test: un scan de otro evento no se encuentra ni se modifica.
+- **Nota (otro dev, 2026-11-04):** Un escaneo que ya existe en otro evento no se devuelve ni se modifica (resultado `invalid`); test en `checkin.test.js` (commit `e4877c1`). Tras el merge con la auditoría se registra como `CHECKIN_REJECTED`, no como reenvío.
 
 ### T3.06 — Validación de entradas
-- **Agente:** dev-backend · **Hallazgos:** H-15 · **Severidad:** Baja · **Dependencias:** ‖ · **Estado:** pendiente
+- **Agente:** dev-backend · **Hallazgos:** H-15 · **Severidad:** Baja · **Dependencias:** ‖ · **Estado:** hecha parcial
 - **Descripción:** `express.json` de 2 MB solo en alta/edición de evento (100 kB en el resto); `deviceId` ≤ 64; `buyerEmail` con formato y largo ≤ 254; `status` contra lista blanca.
 - **Aceptación:** tests de 413/400 por cada caso.
+- **Nota (otro dev, 2026-11-04):** Hecho: `deviceId` ≤ 64 y `buyerEmail` con formato y ≤ 254 (commit `e4877c1`). Falta el límite de cuerpo JSON por ruta (2 MB solo en eventos, 100 kB en el resto) y la lista blanca de `status`.
 
 ### T3.07 — Fin de `ticketera_api` en localStorage
 - **Agente:** dev-frontend · **Hallazgos:** H-16 · **Severidad:** Baja · **Dependencias:** T2.01 · **Estado:** pendiente

@@ -2,6 +2,7 @@ const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const Event = require("../models/Event");
 const { isAssigned } = require("../utils/staffEvents");
+const { audit } = require("../utils/audit");
 require("dotenv").config();
 
 // Los tokens anteriores a tokenVersion no traen `v`: valen como versión 0
@@ -71,18 +72,34 @@ const protect = async (req, res, next) => {
 };
 
 /**
+ * Responde 403 y deja constancia (ACCESS_DENIED) con el actor, el método y el PATRÓN de la
+ * ruta (`/api/x/:id`, nunca la URL concreta: no se guarda texto elegido por quien llama).
+ * Sin req.route (middleware de router.use) se guarda `<baseUrl>/*`. El insert se espera
+ * antes de responder; si falla, audit() no lanza y el 403 sale igual
+ */
+const forbidden = async (req, res) => {
+  const base = req.baseUrl || "";
+  const pattern = req.route && typeof req.route.path === "string"
+    ? `${base}${req.route.path === "/" ? "" : req.route.path}` || "/"
+    : `${base}/*`;
+  await audit(req, {
+    action: "ACCESS_DENIED",
+    result: "denied",
+    details: { method: req.method, route: pattern.slice(0, 200) },
+  });
+  return res.status(403).json({
+    success: false,
+    message: "No tienes permisos para realizar esta acción",
+  });
+};
+
+/**
  * Middleware que verifica si el usuario es un administrador
  * Debe usarse después del middleware protect
  */
 const admin = (req, res, next) => {
-  if (req.user && req.user.role === "admin") {
-    next();
-  } else {
-    res.status(403).json({
-      success: false,
-      message: "No tienes permisos para realizar esta acción",
-    });
-  }
+  if (req.user && req.user.role === "admin") return next();
+  return forbidden(req, res);
 };
 
 /**
@@ -91,21 +108,9 @@ const admin = (req, res, next) => {
  * Debe usarse después del middleware protect
  */
 const staff = (req, res, next) => {
-  if (req.user && ["staff", "organizer", "admin"].includes(req.user.role)) {
-    next();
-  } else {
-    res.status(403).json({
-      success: false,
-      message: "No tienes permisos para realizar esta acción",
-    });
-  }
+  if (req.user && ["staff", "organizer", "admin"].includes(req.user.role)) return next();
+  return forbidden(req, res);
 };
-
-const forbidden = (res) =>
-  res.status(403).json({
-    success: false,
-    message: "No tienes permisos para realizar esta acción",
-  });
 
 /**
  * ¿Puede este usuario escanear entradas del evento? El admin sí en todos; el
@@ -129,7 +134,7 @@ const scanAccess = async (req, res, next) => {
     if (!event) {
       return res.status(404).json({ success: false, message: "Evento no encontrado" });
     }
-    if (!(await canScanEvent(req.user, event))) return forbidden(res);
+    if (!(await canScanEvent(req.user, event))) return forbidden(req, res);
     req.managedEvent = event;
     next();
   } catch (error) {
@@ -145,12 +150,12 @@ const scanAccess = async (req, res, next) => {
  */
 const eventManager = async (req, res, next) => {
   try {
-    if (!req.user || !["admin", "organizer"].includes(req.user.role)) return forbidden(res);
+    if (!req.user || !["admin", "organizer"].includes(req.user.role)) return forbidden(req, res);
     const event = await Event.findByPk(req.params.eventId);
     if (!event) {
       return res.status(404).json({ success: false, message: "Evento no encontrado" });
     }
-    if (req.user.role === "organizer" && event.organizerId !== req.user.id) return forbidden(res);
+    if (req.user.role === "organizer" && event.organizerId !== req.user.id) return forbidden(req, res);
     req.managedEvent = event;
     next();
   } catch (error) {
@@ -165,7 +170,7 @@ const eventManager = async (req, res, next) => {
  */
 const organizer = (req, res, next) => {
   if (req.user && ["organizer", "admin"].includes(req.user.role)) return next();
-  forbidden(res);
+  return forbidden(req, res);
 };
 
 /**

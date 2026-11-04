@@ -396,20 +396,21 @@ test("pausa con body inválido (400) no deja fila", async () => {
 // (5) Anulación manual
 test("PURCHASE_VOID manual: actorId de quien anuló, sin buyerEmail ni accessToken", async () => {
   const purchase = await newPurchase();
-  const res = await asOrg("POST", `/api/purchases/event/${event.id}/${purchase.id}/void`);
+  const res = await asOrg("POST", `/api/purchases/event/${event.id}/${purchase.id}/void`, { reason: "Devolución por fuera" });
   assert.equal(res.status, 200);
   const row = await one({ action: "PURCHASE_VOID", entityId: purchase.id });
   assert.equal(row.actorId, organizer.id);
   assert.equal(row.actorRole, "organizer");
   assert.equal(row.eventId, event.id);
   assert.equal(row.result, "success");
+  assert.equal(row.details.reason, "Devolución por fuera");
   const json = JSON.stringify(row.toJSON());
   assert.ok(!json.includes(BUYER_EMAIL) && !json.includes("buyerEmail"));
   assert.ok(!json.includes(purchase.accessToken) && !json.includes("accessToken"));
   assert.ok(!json.includes("Comprador Privado"));
 
   // anularla de nuevo falla y no agrega otra fila
-  const again = await asOrg("POST", `/api/purchases/event/${event.id}/${purchase.id}/void`);
+  const again = await asOrg("POST", `/api/purchases/event/${event.id}/${purchase.id}/void`, { reason: "Otra vez" });
   assert.equal(again.status, 400);
   assert.equal((await rows({ action: "PURCHASE_VOID", entityId: purchase.id })).length, 1);
 });
@@ -723,12 +724,13 @@ test("append-only: el controlador y las rutas de auditoría solo exponen lectura
   assert.deepEqual(methods, ["get"]);
   const fs = require("node:fs");
   const path = require("node:path");
+  // bulkCreate solo inserta (check-in): no rompe el carácter append-only
   const dir = path.join(__dirname, "..");
   for (const sub of ["controllers", "routes", "utils", "middleware"]) {
     for (const file of fs.readdirSync(path.join(dir, sub))) {
       if (!file.endsWith(".js")) continue;
       const src = fs.readFileSync(path.join(dir, sub, file), "utf8");
-      assert.ok(!/AuditLog\.(update|destroy|upsert|bulkCreate|truncate)\b/.test(src), `${sub}/${file} modifica AuditLog`);
+      assert.ok(!/AuditLog\.(update|destroy|upsert|truncate)\b/.test(src), `${sub}/${file} modifica AuditLog`);
     }
   }
 });
@@ -833,4 +835,281 @@ test("todas las filas tienen action, result válido y las de un usuario autentic
     assert.ok(r.createdAt);
     if (r.actorId && r.action !== "TEST_NORMALIZE") assert.ok(r.ip, `${r.action} sin ip`);
   }
+});
+
+// ---- Endurecimiento: webhook fail-closed, auditoría estricta y nuevas acciones ----
+
+// Hace que AuditLog.create falle solo para las acciones indicadas
+const failAuditFor = (actions) => {
+  const original = AuditLog.create;
+  AuditLog.create = async (row, options) => {
+    if (actions.includes(row.action)) throw new Error("audit caído");
+    return original.call(AuditLog, row, options);
+  };
+  return () => { AuditLog.create = original; };
+};
+
+test("webhook fail-closed: una pasarela real que no informa accountId se trata como mismatch", async () => {
+  const { setProvider } = require("../utils/payments");
+  const purchase = await newPurchase({ status: "pending", withTickets: false });
+  setProvider({
+    name: "fake",
+    createPayment: async () => ({ gatewayId: "x", checkoutUrl: null }),
+    resolveWebhook: async () => ({ gatewayId: purchase.paymentGatewayId, status: "approved", amount: 1000, currency: "ARS" }),
+  });
+  try {
+    const res = await captureLogs(() => webhook());
+    assert.equal(res.result.status, 404);
+    assert.match(res.stderr, /WEBHOOK_ACC_MISMATCH/);
+  } finally {
+    setProvider(null);
+  }
+  assert.equal((await Purchase.findByPk(purchase.id)).status, "pending");
+  assert.equal(await Ticket.count({ where: { purchaseId: purchase.id } }), 0);
+  const row = await one({ action: "WEBHOOK_ACC_MISMATCH", entityId: purchase.id });
+  assert.equal(row.result, "denied");
+});
+
+test("webhook fail-closed: el mock (accountId: null explícito) sigue funcionando", async () => {
+  const { setProvider } = require("../utils/payments");
+  const purchase = await newPurchase({ status: "pending", withTickets: false });
+  setProvider({
+    name: "mock",
+    createPayment: async () => ({ gatewayId: "x", checkoutUrl: null }),
+    resolveWebhook: async () => ({ gatewayId: purchase.paymentGatewayId, status: "approved", accountId: null }),
+  });
+  try {
+    assert.equal((await webhook()).status, 200);
+  } finally {
+    setProvider(null);
+  }
+  assert.equal((await Purchase.findByPk(purchase.id)).status, "completed");
+});
+
+test("PAYMENT_CONFIRMED: pago aprobado por webhook deja fila sin actor ni datos del comprador", async () => {
+  const purchase = await newPurchase({ status: "pending", withTickets: false });
+  pay(purchase, "approved", 1000);
+  const res = await webhook();
+  assert.equal(res.status, 200);
+  const row = await one({ action: "PAYMENT_CONFIRMED", entityId: purchase.id });
+  assert.equal(row.actorId, null);
+  assert.equal(row.eventId, event.id);
+  assert.equal(row.result, "success");
+  assert.ok(!JSON.stringify(row.toJSON()).includes(BUYER_EMAIL));
+  // Un reenvío del mismo aviso no vuelve a registrar la confirmación
+  assert.equal((await webhook()).status, 200);
+  assert.equal((await rows({ action: "PAYMENT_CONFIRMED", entityId: purchase.id })).length, 1);
+});
+
+test("estricta: si falla la auditoría, el webhook de devolución no anula la compra y responde 500", async () => {
+  const purchase = await newPurchase();
+  pay(purchase, "refunded");
+  const restore = failAuditFor(["PURCHASE_VOID_AUTO"]);
+  let res;
+  try {
+    res = await captureLogs(() => webhook());
+  } finally {
+    restore();
+  }
+  assert.equal(res.result.status, 500);
+  assert.equal((await Purchase.findByPk(purchase.id)).status, "completed");
+  assert.equal(await Ticket.count({ where: { purchaseId: purchase.id, status: "valid" } }), 1);
+  assert.equal(await AuditLog.count({ where: { action: "PURCHASE_VOID_AUTO", entityId: purchase.id } }), 0);
+});
+
+test("estricta: si falla la auditoría, la cuenta de pago no se crea, activa ni borra (500)", async () => {
+  // Crear
+  const countAccounts = () => PaymentAccount.count();
+  const before = await countAccounts();
+  let restore = failAuditFor(["PAYMENT_ACCOUNT_CREATE"]);
+  let res;
+  try {
+    res = await captureLogs(() => asAdmin("POST", "/api/payment-accounts", { name: "Falla", accessToken: "APP_USR-token-que-no-queda-1234567" }));
+  } finally { restore(); }
+  assert.equal(res.result.status, 500);
+  assert.equal(await countAccounts(), before);
+
+  // Activar (admin)
+  const target = (await asAdmin("POST", "/api/payment-accounts", { name: "Objetivo", accessToken: "APP_USR-token-objetivo-7654321000" })).body.account;
+  await asAdmin("PUT", "/api/payment-accounts/sales-paused", { paused: true });
+  restore = failAuditFor(["PAYMENT_ACCOUNT_ACTIVATE"]);
+  try {
+    res = await captureLogs(() => asAdmin("POST", `/api/payment-accounts/${target.id}/activate`));
+  } finally { restore(); }
+  assert.equal(res.result.status, 500);
+  assert.equal((await PaymentAccount.findByPk(target.id)).active, false);
+  await asAdmin("PUT", "/api/payment-accounts/sales-paused", { paused: false });
+
+  // Borrar (admin)
+  restore = failAuditFor(["PAYMENT_ACCOUNT_DELETE"]);
+  try {
+    res = await captureLogs(() => asAdmin("DELETE", `/api/payment-accounts/${target.id}`));
+  } finally { restore(); }
+  assert.equal(res.result.status, 500);
+  assert.ok(await PaymentAccount.findByPk(target.id), "la cuenta no debe borrarse");
+
+  // Organizador: activar y borrar
+  const own = (await asOrg("POST", `/api/organizer/events/${event.id}/payments/accounts`, { name: "Propia 2", accessToken: "APP_USR-token-propio-2-1234567890" })).body.account;
+  await asOrg("PUT", `/api/organizer/events/${event.id}/sales-paused`, { paused: true });
+  const prevActive = (await Event.findByPk(event.id)).paymentAccountId;
+  restore = failAuditFor(["PAYMENT_ACCOUNT_ACTIVATE"]);
+  try {
+    res = await captureLogs(() => asOrg("POST", `/api/organizer/events/${event.id}/payments/accounts/${own.id}/activate`));
+  } finally { restore(); }
+  assert.equal(res.result.status, 500);
+  assert.equal((await Event.findByPk(event.id)).paymentAccountId, prevActive);
+  restore = failAuditFor(["PAYMENT_ACCOUNT_DELETE"]);
+  try {
+    res = await captureLogs(() => asOrg("DELETE", `/api/organizer/events/${event.id}/payments/accounts/${own.id}`));
+  } finally { restore(); }
+  assert.equal(res.result.status, 500);
+  assert.ok(await PaymentAccount.findByPk(own.id));
+  await asOrg("PUT", `/api/organizer/events/${event.id}/sales-paused`, { paused: false });
+});
+
+test("audit() strict exige transacción y lanza si el insert falla; sin strict no lanza", async () => {
+  await assert.rejects(audit({}, { action: "X", strict: true }), /AUDIT_STRICT_REQUIRES_TRANSACTION/);
+  const restore = failAuditFor(["STRICT_TEST"]);
+  try {
+    await assert.rejects(
+      sequelize.transaction((transaction) => audit({}, { action: "STRICT_TEST", transaction, strict: true })),
+      /audit caído/
+    );
+    await captureLogs(() => audit({}, { action: "STRICT_TEST" })); // no lanza
+  } finally { restore(); }
+});
+
+test("ACCESS_DENIED: un 403 deja fila con actor y ruta sin query string", async () => {
+  const res = await call("GET", "/api/audit?limit=5&token=secreto-123", { token: staffToken });
+  assert.equal(res.status, 403);
+  const row = (await rows({ action: "ACCESS_DENIED", actorId: staff.id })).at(-1);
+  assert.equal(row.result, "denied");
+  assert.equal(row.actorRole, "staff");
+  assert.equal(row.details.method, "GET");
+  assert.match(row.details.route, /^\/api\/audit\/?$/);
+  assert.ok(!JSON.stringify(row.toJSON()).includes("secreto-123"));
+
+  // Organizador sobre un evento ajeno (eventManager)
+  const other = await Event.create({ title: "Ajeno", description: "x", date: new Date(Date.now() + 86400000), location: "Z", userId: admin.id });
+  const res2 = await asOrg("GET", `/api/organizer/events/${other.id}/payments`);
+  assert.equal(res2.status, 403);
+  const rows2 = await rows({ action: "ACCESS_DENIED", actorId: organizer.id });
+  assert.equal(rows2.at(-1).details.method, "GET");
+  assert.equal(rows2.at(-1).details.route, "/api/organizer/events/:eventId/payments");
+  assert.ok(!JSON.stringify(rows2.at(-1).toJSON()).includes(other.id));
+});
+
+test("check-in: CHECKIN_OK y CHECKIN_REJECTED sin datos del comprador, y el reenvío no duplica filas", async () => {
+  const crypto = require("crypto");
+  const { generateTicketCode } = require("../utils/ticketCode");
+  const purchase = await newPurchase({ withTickets: false });
+  const ticket = await Ticket.create({ eventId: event.id, purchaseId: purchase.id, lotId: lot.id, lotName: "General", code: generateTicketCode() });
+  const mk = (code) => ({ id: crypto.randomUUID(), code, scannedAt: new Date().toISOString() });
+  const first = mk(ticket.code);
+  const dup = mk(ticket.code);
+  const bad = mk("ZZZZZ-ZZZZZ");
+  const body = { deviceId: "puerta-1", scans: [first, dup, bad] };
+
+  const res = await asAdmin("POST", `/api/checkin/events/${event.id}/sync`, body);
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.results.map((r) => r.result), ["admitted", "duplicate", "invalid"]);
+
+  const ok = await one({ action: "CHECKIN_OK", entityId: ticket.id });
+  assert.equal(ok.result, "success");
+  assert.equal(ok.entityType, "Ticket");
+  assert.equal(ok.eventId, event.id);
+  assert.equal(ok.actorId, admin.id);
+  const rejected = await rows({ action: "CHECKIN_REJECTED", eventId: event.id });
+  assert.equal(rejected.length, 2);
+  assert.deepEqual(rejected.map((r) => r.result).sort(), ["denied", "failure"]);
+  const text = JSON.stringify([ok, ...rejected].map((r) => r.toJSON()));
+  assert.ok(!text.includes(BUYER_EMAIL) && !text.includes("Comprador Privado") && !text.includes(ticket.code));
+
+  // Mismo sync reenviado (idempotente): no se audita de nuevo
+  const again = await asAdmin("POST", `/api/checkin/events/${event.id}/sync`, body);
+  assert.equal(again.status, 200);
+  assert.equal(await AuditLog.count({ where: { action: "CHECKIN_OK", entityId: ticket.id } }), 1);
+  assert.equal(await AuditLog.count({ where: { action: "CHECKIN_REJECTED", eventId: event.id } }), 2);
+});
+
+test("ACCESS_DENIED sobre una subruta inventada guarda solo baseUrl/* y no el texto del usuario", async () => {
+  const invented = "/api/organizer/texto-elegido-por-el-usuario/otra-parte-muy-larga/" + "x".repeat(150);
+  const res = await call("GET", invented, { token: staffToken });
+  assert.equal(res.status, 403);
+  const row = (await rows({ action: "ACCESS_DENIED", actorId: staff.id })).at(-1);
+  assert.equal(row.details.route, "/api/organizer/*");
+  assert.equal(row.details.method, "GET");
+  assert.ok(!JSON.stringify(row.toJSON()).includes("texto-elegido"));
+});
+
+test("PURCHASE_VOID: el motivo se guarda sin emails ni números largos (DNI, teléfono)", async () => {
+  const purchase = await newPurchase();
+  const reason = "Pidió ana.perez@correo.com DNI 30.123.456 tel 11 5555-1234 ok";
+  const res = await asOrg("POST", `/api/purchases/event/${event.id}/${purchase.id}/void`, { reason });
+  assert.equal(res.status, 200);
+  const row = await one({ action: "PURCHASE_VOID", entityId: purchase.id });
+  assert.equal(row.details.reason, "Pidió a***@correo.com DNI *** tel *** ok");
+  const json = JSON.stringify(row.toJSON());
+  assert.ok(!json.includes("ana.perez") && !json.includes("30.123.456") && !json.includes("5555"));
+});
+
+test("strict: la línea de stdout sale tras el commit y con rollback no sale", async () => {
+  const marker = "STRICT_LOG_TEST";
+  const attempt = (fail) =>
+    captureLogs(async () => {
+      try {
+        await sequelize.transaction(async (transaction) => {
+          await audit({}, { action: marker, transaction, strict: true });
+          if (fail) throw new Error("rollback");
+        });
+      } catch (e) { /* esperado */ }
+    });
+  const rolledBack = await attempt(true);
+  assert.ok(!rolledBack.stdout.includes(marker), "con rollback no debe emitirse la línea");
+  assert.equal(await AuditLog.count({ where: { action: marker } }), 0);
+  const committed = await attempt(false);
+  assert.ok(committed.stdout.includes(marker));
+  assert.equal(await AuditLog.count({ where: { action: marker } }), 1);
+});
+
+test("check-in: el sync audita con un único bulkCreate (N escaneos nuevos, N filas y N líneas)", async () => {
+  const crypto = require("crypto");
+  const { generateTicketCode } = require("../utils/ticketCode");
+  const purchase = await newPurchase({ withTickets: false });
+  const scans = [];
+  for (let i = 0; i < 5; i++) {
+    const t = await Ticket.create({ eventId: event.id, purchaseId: purchase.id, lotId: lot.id, lotName: "General", code: generateTicketCode() });
+    scans.push({ id: crypto.randomUUID(), code: t.code, scannedAt: new Date().toISOString() });
+  }
+  const origBulk = AuditLog.bulkCreate;
+  const origCreate = AuditLog.create;
+  let bulkCalls = 0;
+  let createCalls = 0;
+  AuditLog.bulkCreate = function (...a) { bulkCalls += 1; return origBulk.apply(this, a); };
+  AuditLog.create = function (...a) { createCalls += 1; return origCreate.apply(this, a); };
+  const ids = scans.map((s) => s.id);
+  let out;
+  try {
+    out = await captureLogs(() => asAdmin("POST", `/api/checkin/events/${event.id}/sync`, { deviceId: "bulk-1", scans }));
+  } finally {
+    AuditLog.bulkCreate = origBulk;
+    AuditLog.create = origCreate;
+  }
+  assert.equal(out.result.status, 200);
+  assert.deepEqual(out.result.body.results.map((r) => r.result), Array(5).fill("admitted"));
+  assert.equal(bulkCalls, 1);
+  assert.equal(createCalls, 0);
+  const saved = (await rows({ action: "CHECKIN_OK" })).filter((r) => ids.includes(r.details.scanId));
+  assert.equal(saved.length, 5);
+  assert.equal(out.stdout.split("\n").filter((l) => l.includes('"CHECKIN_OK"') && l.startsWith('{"audit":true')).length, 5);
+
+  // Si el bulk falla, el sync responde igual
+  const again = scans.map((s) => ({ ...s, id: crypto.randomUUID() }));
+  AuditLog.bulkCreate = async () => { throw new Error("audit caído"); };
+  let failed;
+  try {
+    failed = await captureLogs(() => asAdmin("POST", `/api/checkin/events/${event.id}/sync`, { deviceId: "bulk-1", scans: again }));
+  } finally { AuditLog.bulkCreate = origBulk; }
+  assert.equal(failed.result.status, 200);
+  assert.match(failed.stderr, /AUDIT_WRITE_FAILED/);
 });

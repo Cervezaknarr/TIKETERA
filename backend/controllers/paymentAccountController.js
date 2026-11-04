@@ -82,18 +82,27 @@ const createPaymentAccount = async (req, res) => {
 
     // Desde el panel del organizador (eventManager) la cuenta queda como propia de ese
     // evento; desde el panel general del admin, como cuenta de la plataforma
-    const account = await PaymentAccount.create({
-      name,
-      accessToken: encrypt(accessToken),
-      tokenHint: accessToken.slice(-4),
-      eventId: req.managedEvent ? req.managedEvent.id : null,
-    });
-    await audit(req, {
-      action: "PAYMENT_ACCOUNT_CREATE",
-      entityType: "PaymentAccount",
-      entityId: account.id,
-      eventId: account.eventId,
-      details: { name: account.name },
+    // Cuenta y auditoría en una transacción: si no se puede auditar, la cuenta no se crea
+    const account = await sequelize.transaction(async (transaction) => {
+      const created = await PaymentAccount.create(
+        {
+          name,
+          accessToken: encrypt(accessToken),
+          tokenHint: accessToken.slice(-4),
+          eventId: req.managedEvent ? req.managedEvent.id : null,
+        },
+        { transaction }
+      );
+      await audit(req, {
+        action: "PAYMENT_ACCOUNT_CREATE",
+        entityType: "PaymentAccount",
+        entityId: created.id,
+        eventId: created.eventId,
+        details: { name: created.name },
+        transaction,
+        strict: true,
+      });
+      return created;
     });
     res.status(201).json({ success: true, account: present(account) });
   } catch (error) {
@@ -127,18 +136,20 @@ const activatePaymentAccount = async (req, res) => {
       await PaymentAccount.update({ active: false }, { where: { eventId: null }, transaction });
       account.active = true;
       await account.save({ transaction });
+      await audit(req, {
+        action: "PAYMENT_ACCOUNT_ACTIVATE",
+        entityType: "PaymentAccount",
+        entityId: account.id,
+        details: { activeAccountId: { from: previousId, to: account.id } },
+        transaction,
+        strict: true,
+      });
       return account;
     });
 
     if (!result) {
       return res.status(404).json({ success: false, message: "Cuenta no encontrada" });
     }
-    await audit(req, {
-      action: "PAYMENT_ACCOUNT_ACTIVATE",
-      entityType: "PaymentAccount",
-      entityId: result.id,
-      details: { activeAccountId: { from: previousId, to: result.id } },
-    });
     res.json({ success: true, account: present(result) });
   } catch (error) {
     console.error(error);
@@ -167,12 +178,16 @@ const deletePaymentAccount = async (req, res) => {
         message: "Esta cuenta ya cobró compras y su token hace falta para confirmar pagos",
       });
     }
-    await account.destroy();
-    await audit(req, {
-      action: "PAYMENT_ACCOUNT_DELETE",
-      entityType: "PaymentAccount",
-      entityId: account.id,
-      details: { name: account.name },
+    await sequelize.transaction(async (transaction) => {
+      await account.destroy({ transaction });
+      await audit(req, {
+        action: "PAYMENT_ACCOUNT_DELETE",
+        entityType: "PaymentAccount",
+        entityId: account.id,
+        details: { name: account.name },
+        transaction,
+        strict: true,
+      });
     });
     res.json({ success: true });
   } catch (error) {

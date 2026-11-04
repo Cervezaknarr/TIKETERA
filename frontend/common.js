@@ -45,10 +45,16 @@ async function resendTicketsEmail(eventId, purchaseId, btn) {
 
 // Panel (admin y organizador): anular las entradas de una compra pagada. No devuelve la plata
 async function voidPurchaseTickets(eventId, purchaseId, btn) {
-  if (!confirm('Las entradas de ' + btn.dataset.name + ' dejarán de ser válidas en la puerta. Esto no devuelve el dinero. ¿Anular la compra?')) return;
+  const input = window.prompt('Las entradas de ' + btn.dataset.name + ' dejarán de ser válidas en la puerta. Esto no devuelve el dinero.\n\nIndicá el motivo (sin datos personales del comprador: ni email ni DNI) de la anulación (3 a 200 caracteres):');
+  if (input === null) return;
+  const reason = input.trim();
+  if (reason.length < 3 || reason.length > 200) {
+    flash('El motivo de la anulación debe tener entre 3 y 200 caracteres.', 'err');
+    return;
+  }
   btn.disabled = true;
   try {
-    const { message } = await api('/purchases/event/' + eventId + '/' + purchaseId + '/void', { method: 'POST', auth: true });
+    const { message } = await api('/purchases/event/' + eventId + '/' + purchaseId + '/void', { method: 'POST', auth: true, body: { reason } });
     await viewBuyers(eventId);
     flash(message);
   } catch (err) { btn.disabled = false; flash(err.message, 'err'); }

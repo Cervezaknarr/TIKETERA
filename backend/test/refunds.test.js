@@ -159,12 +159,13 @@ test("una devolución de una compra todavía pendiente la rechaza y libera el cu
 test("el admin anula una compra a mano y el organizador solo las de su evento", async () => {
   const purchase = await paidPurchase();
   const path = (id = purchase.id, eventId = event.id) => `/api/purchases/event/${eventId}/${id}/void`;
+  const reason = { reason: "Devolución hecha por fuera" };
 
   assert.equal((await call("POST", path())).status, 401);
   assert.equal((await call("POST", path(), { user: staff })).status, 403);
   assert.equal((await call("POST", path(), { user: orgB })).status, 403);
 
-  const res = await call("POST", path(), { user: orgA });
+  const res = await call("POST", path(), { user: orgA, body: reason });
   assert.equal(res.status, 200);
   assert.match(res.body.message, /2 entrada\(s\) dejaron de ser válidas/);
   assert.match(res.body.message, /no devuelve el dinero/);
@@ -172,7 +173,7 @@ test("el admin anula una compra a mano y el organizador solo las de su evento", 
   assert.equal(await Ticket.count({ where: { purchaseId: purchase.id, status: "void" } }), 2);
 
   // Ya anulada: no se puede anular dos veces
-  const again = await call("POST", path(), { user: admin });
+  const again = await call("POST", path(), { user: admin, body: reason });
   assert.equal(again.status, 400);
 });
 
@@ -188,10 +189,44 @@ test("no se anula una compra pendiente ni una de otro evento", async () => {
     eventId: event.id, buyerName: "Y", buyerEmail: "y@test.com", quantity: 1, totalPrice: 10, status: "pending",
   });
 
-  const notPaid = await call("POST", `/api/purchases/event/${event.id}/${pending.id}/void`, { user: admin });
+  const notPaid = await call("POST", `/api/purchases/event/${event.id}/${pending.id}/void`, { user: admin, body: { reason: "Prueba" } });
   assert.equal(notPaid.status, 400);
   // La compra de otro evento no se alcanza usando un evento propio en la URL
-  const wrongEvent = await call("POST", `/api/purchases/event/${event.id}/${foreign.id}/void`, { user: orgA });
+  const wrongEvent = await call("POST", `/api/purchases/event/${event.id}/${foreign.id}/void`, { user: orgA, body: { reason: "Prueba" } });
   assert.equal(wrongEvent.status, 404);
   assert.equal((await Purchase.findByPk(foreign.id)).status, "completed");
+});
+
+test("la anulación manual exige un motivo de 3 a 200 caracteres y lo guarda en la auditoría", async () => {
+  const AuditLog = require("../models/AuditLog");
+  const purchase = await paidPurchase();
+  const url = `/api/purchases/event/${event.id}/${purchase.id}/void`;
+
+  for (const body of [undefined, {}, { reason: "" }, { reason: "  ab  " }, { reason: 123 }, { reason: "x".repeat(201) }]) {
+    const res = await call("POST", url, { user: orgA, body });
+    assert.equal(res.status, 400, JSON.stringify(body));
+    assert.match(res.body.message, /motivo/);
+  }
+  assert.equal((await Purchase.findByPk(purchase.id)).status, "completed");
+
+  const ok = await call("POST", url, { user: orgA, body: { reason: "  Cliente pidió devolución  " } });
+  assert.equal(ok.status, 200);
+  const row = await AuditLog.findOne({ where: { action: "PURCHASE_VOID", entityId: purchase.id } });
+  assert.equal(row.details.reason, "Cliente pidió devolución");
+});
+
+test("si falla la auditoría estricta, la anulación manual se revierte y responde 500", async () => {
+  const AuditLog = require("../models/AuditLog");
+  const purchase = await paidPurchase();
+  const original = AuditLog.create;
+  AuditLog.create = async () => { throw new Error("audit caído"); };
+  let res;
+  try {
+    res = await call("POST", `/api/purchases/event/${event.id}/${purchase.id}/void`, { user: orgA, body: { reason: "Prueba" } });
+  } finally {
+    AuditLog.create = original;
+  }
+  assert.equal(res.status, 500);
+  assert.equal((await Purchase.findByPk(purchase.id)).status, "completed");
+  assert.equal(await Ticket.count({ where: { purchaseId: purchase.id, status: "valid" } }), 2);
 });
