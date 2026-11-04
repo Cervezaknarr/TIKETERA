@@ -63,7 +63,12 @@ const withLots = async (events, { admin = false } = {}) => {
     delete json.ticketsAvailable;
     // Datos internos: la cuenta de cobro nunca sale; el organizador, solo para el admin
     delete json.paymentAccountId;
-    if (!admin) delete json.organizerId;
+    if (!admin) {
+      delete json.organizerId;
+      // Quién creó el evento (id y nombre del admin) no es información pública
+      delete json.userId;
+      delete json.User;
+    }
     json.lots = lots.filter((lot) => lot.eventId === event.id);
     json.packs = packs.get(event.id) || [];
     json.ticketsAvailable = json.lots.reduce((sum, lot) => sum + lot.ticketsAvailable, 0);

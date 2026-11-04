@@ -260,29 +260,41 @@ test("los admin no se pueden modificar ni borrar desde la API", async () => {
   assert.equal(del.status, 404);
 });
 
-test("ensureAdmin crea el admin inicial o asciende uno existente", async () => {
-  process.env.ADMIN_EMAIL = "Jefe@Test.com";
-  process.env.ADMIN_PASSWORD = "corta";
-  await ensureAdmin();
-  assert.equal(await User.count({ where: { email: "jefe@test.com" } }), 0);
+test("ensureAdmin crea el primer admin y nunca asciende ni pisa cuentas", async () => {
+  // Estos tests ya tienen un admin: se lo saca para simular una base vacía de admins
+  const admins = await User.findAll({ where: { role: "admin" } });
+  await User.update({ role: "staff" }, { where: { role: "admin" } });
+  try {
+    process.env.ADMIN_EMAIL = "Jefe@Test.com";
+    process.env.ADMIN_PASSWORD = "corta";
+    await ensureAdmin();
+    assert.equal(await User.count({ where: { email: "jefe@test.com" } }), 0);
 
-  process.env.ADMIN_PASSWORD = "clave-larga-123";
-  await ensureAdmin();
-  const jefe = await User.findOne({ where: { email: "jefe@test.com" } });
-  assert.equal(jefe.role, "admin");
-  assert.ok(await jefe.comparePassword("clave-larga-123"));
+    process.env.ADMIN_PASSWORD = "clave-larga-123";
+    await ensureAdmin();
+    const jefe = await User.findOne({ where: { email: "jefe@test.com" } });
+    assert.equal(jefe.role, "admin");
+    assert.ok(await jefe.comparePassword("clave-larga-123"));
 
-  // Si ya existe no cambia la contraseña
-  process.env.ADMIN_PASSWORD = "otra-clave-456";
-  await ensureAdmin();
-  await jefe.reload();
-  assert.ok(await jefe.comparePassword("clave-larga-123"));
+    // Con un admin existente no hace nada: ni cambia la contraseña ni crea otro
+    process.env.ADMIN_PASSWORD = "otra-clave-456";
+    await ensureAdmin();
+    await jefe.reload();
+    assert.ok(await jefe.comparePassword("clave-larga-123"));
 
-  // Asciende una cuenta existente
-  process.env.ADMIN_EMAIL = "viejo@test.com";
-  await ensureAdmin();
-  assert.equal((await User.findOne({ where: { email: "viejo@test.com" } })).role, "admin");
+    // No asciende una cuenta existente, aunque su email esté en ADMIN_EMAIL
+    process.env.ADMIN_EMAIL = "viejo@test.com";
+    await ensureAdmin();
+    assert.notEqual((await User.findOne({ where: { email: "viejo@test.com" } })).role, "admin");
 
-  delete process.env.ADMIN_EMAIL;
-  delete process.env.ADMIN_PASSWORD;
+    // Y si no hay admin y el email es de una cuenta existente, tampoco la asciende
+    await User.update({ role: "staff" }, { where: { role: "admin" } });
+    await ensureAdmin();
+    assert.notEqual((await User.findOne({ where: { email: "viejo@test.com" } })).role, "admin");
+    assert.equal(await User.count({ where: { role: "admin" } }), 0);
+  } finally {
+    delete process.env.ADMIN_EMAIL;
+    delete process.env.ADMIN_PASSWORD;
+    await User.update({ role: "admin" }, { where: { id: admins.map((u) => u.id) } });
+  }
 });

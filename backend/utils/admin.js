@@ -1,25 +1,26 @@
 const User = require("../models/User");
 const { MIN_PASSWORD_LENGTH } = require("../controllers/userController");
+const { maskEmail } = require("./redact");
 
 /**
  * Crear el primer admin a partir de ADMIN_EMAIL y ADMIN_PASSWORD (ADMIN_NAME opcional).
  * Se usa al arrancar porque en el plan gratis de Render no hay consola para
  * correr un script.
- * - Si no existe un usuario con ese email, lo crea como admin.
- * - Si existe, lo pasa a admin pero NO le cambia la contraseña: la variable
- *   solo sirve para la primera vez y después se puede borrar del panel.
- * Sin ADMIN_EMAIL no hace nada.
+ * - Solo crea el admin si NO existe ningún admin y el email no está usado.
+ * - Nunca asciende una cuenta existente (staff u organizador) ni cambia contraseñas:
+ *   así dejar ADMIN_EMAIL en el entorno no es una puerta para ganar permisos.
+ * Sin ADMIN_EMAIL no hace nada. Una vez creado, se pueden borrar las variables.
  */
 const ensureAdmin = async () => {
   const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
   if (!email) return;
 
-  const existing = await User.findOne({ where: { email } });
-  if (existing) {
-    if (existing.role !== "admin") {
-      await existing.update({ role: "admin" });
-      console.log(`Usuario ${email} pasado a admin`);
-    }
+  if (await User.count({ where: { role: "admin" } })) return;
+
+  if (await User.findOne({ where: { email } })) {
+    console.error(
+      `ADMIN_EMAIL (${maskEmail(email)}) ya es una cuenta que no es admin: no se la asciende. Usá otro email para el primer admin`
+    );
     return;
   }
 
@@ -37,7 +38,7 @@ const ensureAdmin = async () => {
     password,
     role: "admin",
   });
-  console.log(`Admin ${email} creado`);
+  console.log(`Admin ${maskEmail(email)} creado`);
 };
 
 module.exports = { ensureAdmin };

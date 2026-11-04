@@ -17,6 +17,9 @@ const { paymentWindowMinutes } = require("../utils/paymentWindow");
 const { isSalesPaused } = require("../utils/paymentAccounts");
 const { audit } = require("../utils/audit");
 
+// Formato básico de email (algo@dominio.tld, sin espacios); la validación real es que llegue el mail
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 // Hasta cuándo puede pagar el comprador (para mostrarle el contador)
 const paymentDeadline = (purchase) =>
   new Date(new Date(purchase.createdAt).getTime() + paymentWindowMinutes() * 60 * 1000);
@@ -215,6 +218,12 @@ const createCheckoutSession = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Por favor proporciona todos los campos requeridos",
+      });
+    }
+    if (typeof buyerEmail !== "string" || buyerEmail.length > 254 || !EMAIL_REGEX.test(buyerEmail.trim())) {
+      return res.status(400).json({
+        success: false,
+        message: "El email no es válido",
       });
     }
     if (typeof buyerName !== "string" || buyerName.length > 100) {

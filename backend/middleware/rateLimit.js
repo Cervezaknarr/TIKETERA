@@ -41,4 +41,21 @@ const authLimiter = () =>
     message: "Demasiados intentos. Esperá unos minutos e intentá de nuevo",
   });
 
-module.exports = { createRateLimiter, checkoutLimiter, authLimiter };
+// Webhook de la pasarela: tope por IP holgado (Mercado Pago reintenta y manda varios avisos
+// por pago). Frena que alguien use el endpoint para gastar consultas a la API de la pasarela
+const webhookLimiter = () =>
+  createRateLimiter({
+    windowMs: 60 * 1000,
+    max: fromEnv("RATE_LIMIT_WEBHOOK_MAX", 300),
+    message: "Demasiados avisos desde esta conexión",
+  });
+
+// Link privado de la compra (/tickets/:accessToken): frena el adivinado de tokens
+const ticketLinkLimiter = () =>
+  createRateLimiter({
+    windowMs: 10 * 60 * 1000,
+    max: fromEnv("RATE_LIMIT_TICKETS_MAX", 120),
+    message: "Demasiados intentos. Esperá unos minutos e intentá de nuevo",
+  });
+
+module.exports = { createRateLimiter, checkoutLimiter, authLimiter, webhookLimiter, ticketLinkLimiter };

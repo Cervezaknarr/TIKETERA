@@ -31,7 +31,7 @@ services:
       - key: MERCADOPAGO_ACCESS_TOKEN
         sync: false
       # Clave con la que se cifran los tokens de las cuentas de Mercado Pago del panel
-      # (/admin > Pagos). Se carga a mano; si cambia, hay que volver a cargar las cuentas
+      # (/adminGt > Pagos). Se carga a mano; si cambia, hay que volver a cargar las cuentas
       - key: PAYMENT_ACCOUNTS_KEY
         sync: false
       # Primer admin (ver backend/.env.example). Se cargan a mano en el panel
