@@ -74,7 +74,7 @@ Tablero compartido. Plan, decisiones (D1..D13), matriz de trazabilidad y accione
 
 ### T1.06 — Checklist de despliegue D0
 - **Agente:** devops · **Hallazgos:** I-01, H-10, I-03 · **Severidad:** Alta · **Dependencias:** T0.01 ‖ · **Estado:** pendiente
-- **Descripción:** `docs/operacion/despliegue.md`: pasos de D0 (export de la base, ventana sin ventas, `DB_SYNC_ALTER` ≠ false, merge a `prod` solo por orden del usuario, verificación de logs y de la migración de staff, `DB_SYNC_ALTER=false` después, asignar eventos al staff general, rollback). Incluir los cambios de esquema de `prod..main` (de T0.01).
+- **Descripción:** `docs/operacion/despliegue.md`: pasos de D0 (export de la base, momento tranquilo sin ingreso en puerta (no hace falta pausar ventas), `DB_SYNC_ALTER` puede quedar en false (solo se crea `AuditLog`), merge a `prod` solo por orden del usuario, verificación de logs y de la migración de staff, `DB_SYNC_ALTER=false` después, asignar eventos al staff general, rollback). Incluir los cambios de esquema de `prod..main` (de T0.01).
 - **Aceptación:** checklist con cada paso verificable y su responsable (usuario / agente); revisado por el usuario.
 
 ### T1.07 — Ensayo de D0 en Postgres local
