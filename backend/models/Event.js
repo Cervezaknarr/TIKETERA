@@ -31,6 +31,12 @@ const Event = sequelize.define("Event", {
     type: DataTypes.STRING,
     allowNull: false,
   },
+  // Dirección o lugar que se busca en el mapa de la página del evento.
+  // Sin valor se busca por `location`
+  mapQuery: {
+    type: DataTypes.STRING(200),
+    allowNull: true,
+  },
   // En desuso: el precio y el cupo viven en los lotes (models/Lot.js). Las
   // columnas siguen para no romper la base existente y los eventos viejos se
   // migran a un lote "General" al arrancar (utils/migrateLots.js)

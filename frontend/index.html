@@ -16,7 +16,10 @@
   <div id="msg"></div>
   <div id="view"></div>
 </main>
-<footer class="site-foot">Desarrollado por <b>Gambetech</b></footer>
+<footer class="site-foot">
+  <p>© <span data-year>2026</span> GT Tickets. Todos los derechos reservados · <a href="/terminos.html">Términos y condiciones</a></p>
+  <p>Desarrollado por <b>Gambetech</b></p>
+</footer>
 
 <script src="/common.js"></script>
 <script>
@@ -71,14 +74,11 @@ async function viewEvents() {
   } catch (err) { $('view').innerHTML = ''; flash(err.message, 'err'); }
 }
 
-// Todos los eventos son en el mismo lugar (Club Universitario de La Plata): mapa de Google
-// embebido, sin API key. Para cambiarlo: Google Maps > Compartir > Insertar un mapa > copiar el src
-const EVENT_MAP_SRC = "https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d6546.049845049984!2d-58.01646536762052!3d-34.88072047542471!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x95a2ddf0f0f47e75%3A0x8a17dcfbc1548515!2sClub%20Universitario%20de%20La%20Plata!5e0!3m2!1ses-419!2sar!4v1792817682053!5m2!1ses-419!2sar";
-
+// Mapa del evento: busca la dirección que cargó el admin (mapQuery) o, si no hay, el lugar
 function mapBlock(e) {
   return `
     <div class="ev-map">
-      <iframe title="Mapa de ${esc(e.location)}" src="${EVENT_MAP_SRC}" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+      <iframe title="Mapa de ${esc(e.location)}" src="${mapSrc(e.mapQuery || e.location)}" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
     </div>`;
 }
 

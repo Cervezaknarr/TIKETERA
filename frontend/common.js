@@ -110,3 +110,9 @@ function renderLogin(title, allowedRoles, onLogin) {
     } catch (err) { flash(err.message, 'err'); }
   };
 }
+
+// Mapa de Google embebido sin API key: busca el texto (dirección o nombre del lugar)
+const mapSrc = q => 'https://www.google.com/maps?q=' + encodeURIComponent(q) + '&output=embed&hl=es';
+
+// Año del copyright en el pie de página
+document.querySelectorAll('[data-year]').forEach(el => { el.textContent = new Date().getFullYear(); });

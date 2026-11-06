@@ -17,6 +17,15 @@ const isValidImage = (value) =>
   typeof value === "string" &&
   value.length <= MAX_IMAGE_LENGTH &&
   /^(data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+|https?:\/\/\S+)$/.test(value);
+// Texto para el mapa: opcional; vacío o null lo deja sin valor (se usa el lugar del evento)
+const parseMapQuery = (value) => {
+  if (value === undefined) return {};
+  if (value === null || (typeof value === "string" && !value.trim())) return { mapQuery: null };
+  if (typeof value !== "string" || value.trim().length > 200) {
+    return { error: "La dirección del mapa tiene que ser un texto de hasta 200 caracteres" };
+  }
+  return { mapQuery: value.trim() };
+};
 const INVALID_IMAGE ="La portada tiene que ser una imagen JPG, PNG o WebP de hasta 1,5 MB";
 
 // Edad mínima del evento. Acepta minAge (entero 1-99, o null/"" para quitarla) y,
@@ -89,6 +98,8 @@ const createEvent = async (req, res) => {
     if (Number.isNaN(new Date(date).getTime())) {
       return res.status(400).json({ success: false, message: "La fecha del evento no es válida" });
     }
+    const map = parseMapQuery(req.body.mapQuery);
+    if (map.error) return res.status(400).json({ success: false, message: map.error });
 
     if (imageUrl && !isValidImage(imageUrl)) {
       return res.status(400).json({ success: false, message: INVALID_IMAGE });
@@ -134,6 +145,7 @@ const createEvent = async (req, res) => {
           description,
           date,
           location,
+          mapQuery: map.mapQuery ?? null,
           imageUrl: imageUrl || null,
           adultsOnly: age.minAge != null,
           minAge: age.minAge ?? null,
@@ -323,12 +335,15 @@ const updateEvent = async (req, res) => {
     }
     const organizer = await parseOrganizer(req.body.organizerId);
     if (organizer.error) return res.status(400).json({ success: false, message: organizer.error });
+    const map = parseMapQuery(req.body.mapQuery);
+    if (map.error) return res.status(400).json({ success: false, message: map.error });
 
     // Solo actualizar los campos proporcionados
     if (title !== undefined) event.title = title.trim();
     if (description !== undefined) event.description = description.trim();
     if (date !== undefined) event.date = date;
     if (location !== undefined) event.location = location.trim();
+    if (map.mapQuery !== undefined) event.mapQuery = map.mapQuery;
     if (imageUrl !== undefined) event.imageUrl = imageUrl || null;
     if (status !== undefined) event.status = status;
     if (req.body.unlisted !== undefined) event.unlisted = req.body.unlisted;

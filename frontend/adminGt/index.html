@@ -17,6 +17,10 @@
   <div id="msg"></div>
   <div id="view"></div>
 </main>
+<footer class="site-foot">
+  <p>© <span data-year>2026</span> GT Tickets. Todos los derechos reservados · <a href="/terminos.html">Términos y condiciones</a></p>
+  <p>Desarrollado por <b>Gambetech</b></p>
+</footer>
 
 <script src="/common.js"></script>
 <script>
@@ -50,6 +54,13 @@ function go(view, arg) {
 const eventStatus = { published: 'Publicado', draft: 'Borrador', cancelled: 'Cancelado' };
 
 // ---------- Eventos ----------
+// Cuadradito del listado: la portada, o el día del evento si no tiene
+function evThumb(e) {
+  if (e.imageUrl) return `<img class="ev-thumb" src="${esc(e.imageUrl)}" alt="Portada de ${esc(e.title)}" loading="lazy">`;
+  const d = new Date(e.date);
+  return `<div class="ev-thumb ev-thumb-date" aria-hidden="true"><b>${d.getDate()}</b><span>${esc(d.toLocaleString('es-AR', { month: 'short' }).replace('.', ''))}</span></div>`;
+}
+
 async function viewEvents() {
   $('view').innerHTML = '<p class="muted">Cargando…</p>';
   try {
@@ -59,7 +70,9 @@ async function viewEvents() {
       api(`/checkin/events/${e.id}/stats`, { auth: true }).then(r => r.stats).catch(() => null)));
     $('view').innerHTML = `<h2>Eventos</h2>` + (events.length
       ? `<div class="grid">${events.map((e, i) => `
-        <div class="card">
+        <div class="card ev-admin">
+          ${evThumb(e)}
+          <div class="ev-admin-body">
           <h3>${esc(e.title)} <span class="tag ${e.status === 'published' ? 'completed' : 'failed'}">${eventStatus[e.status]}</span>${e.unlisted ? ' <span class="tag">No listado</span>' : ''}${ageOf(e) ? ` <span class="tag">+${ageOf(e)}</span>` : ''}</h3>
           <div class="muted">📅 ${new Date(e.date).toLocaleString('es-AR')}<br>📍 ${esc(e.location)}<br>🔗 <a href="/e/${esc(e.slug)}" target="_blank">${location.origin}/e/${esc(e.slug)}</a></div>
           <div class="lots">${e.lots.map(l => `
@@ -72,6 +85,7 @@ async function viewEvents() {
           <p><button onclick="go('buyers','${e.id}')">Compradores</button>
              <button class="ghost" onclick="go('courtesies','${e.id}')">Cortesías</button>
              <button class="ghost" onclick="go('edit','${e.id}')">Editar</button></p>
+          </div>
         </div>`).join('')}</div>`
       : `<p class="muted">Todavía no hay eventos.</p><p><button onclick="go('edit')">Crear el primero</button></p>`);
   } catch (err) { $('view').innerHTML = ''; flash(err.message, 'err'); }
@@ -107,8 +121,11 @@ async function viewEdit(id) {
       <label>Descripción</label><textarea id="eDesc" rows="3" required>${esc(e.description)}</textarea>
       <div class="row">
         <div><label>Fecha y hora</label><input id="eDate" type="datetime-local" required value="${e.date ? toLocalInput(e.date) : ''}"></div>
-        <div><label>Lugar</label><input id="eLoc" required value="${esc(e.location)}"></div>
+        <div><label>Lugar</label><input id="eLoc" required value="${esc(e.location)}" oninput="previewMap()"></div>
       </div>
+      <label>Ubicación en el mapa (opcional)</label>
+      <input id="eMap" maxlength="200" placeholder="Dirección o nombre del lugar; vacío = se busca por el Lugar" value="${esc(e.mapQuery || '')}" oninput="previewMap()">
+      <div class="map-preview"><iframe id="eMapPreview" title="Vista previa del mapa" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe></div>
       <label>Edad mínima (opcional)</label>
       <input id="eMinAge" type="number" min="1" max="99" step="1" list="eAgeOpts" placeholder="Sin restricción" value="${ageOf(e) || ''}">
       <datalist id="eAgeOpts"><option value="16"><option value="18"><option value="21"><option value="23"></datalist>
@@ -142,6 +159,7 @@ async function viewEdit(id) {
       </form>
     </div>`;
     addLotRow('General');
+    previewMap();
     return;
   }
 
@@ -209,6 +227,7 @@ async function viewEdit(id) {
       <button type="button" onclick="addPackBtn('${e.id}')">Agregar pack</button>
     </div>
   </div>`;
+  previewMap();
 }
 
 const packLotOptions = (e, selected) => e.lots.map(l =>
@@ -282,11 +301,21 @@ function removeCover() {
   $('coverFile').value = '';
 }
 
+// Vista previa del mapa del formulario: espera a que termine de escribir para no recargarlo en cada tecla
+let mapTimer = null;
+function previewMap() {
+  clearTimeout(mapTimer);
+  mapTimer = setTimeout(() => {
+    const q = ($('eMap').value || $('eLoc').value).trim();
+    $('eMapPreview').src = q ? mapSrc(q) : 'about:blank';
+  }, 500);
+}
+
 async function submitEvent(ev, id) {
   ev.preventDefault();
   const body = {
     title: $('eTitle').value, description: $('eDesc').value,
-    date: new Date($('eDate').value).toISOString(), location: $('eLoc').value,
+    date: new Date($('eDate').value).toISOString(), location: $('eLoc').value, mapQuery: $('eMap').value,
     status: $('eStatus').value, unlisted: $('eUnlisted').checked, organizerId: $('eOrganizer').value || null, minAge: $('eMinAge').value === '' ? null : Number($('eMinAge').value),
   };
   if (coverData !== undefined) body.imageUrl = coverData;

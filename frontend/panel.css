@@ -1,19 +1,30 @@
-/* Cabecera de los paneles del personal (/adminGt, /organizadorGt, /staffGt).
-   Toma la línea del sitio público (event.css): barra con vidrio esmerilado, logo GT y
-   botones del menú en píldora. Solo toca el header: el contenido de cada panel sigue con styles.css */
+/* Paneles del personal (/adminGt, /organizadorGt, /staffGt).
+   Misma línea que el sitio público (event.css): negro y blanco como base, azul de acento,
+   barra con vidrio esmerilado, logo GT y botones del menú en píldora.
+   Todo cuelga de body.panel para no tocar el sitio público */
 
+/* Paleta: claro (blanco sobre gris muy suave) y oscuro (negro puro), según el sistema */
+body.panel {
+  --bg:#f5f5f7; --card:#fff; --text:#1d1d1f; --muted:#6e6e73; --accent:#0071e3; --border:rgba(0,0,0,.1);
+  --ok:#248a3d; --err:#d70015;
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  min-height:100vh; display:flex; flex-direction:column;
+}
+@media (prefers-color-scheme: dark) {
+  body.panel {
+    --bg:#000; --card:#1c1c1e; --text:#f5f5f7; --muted:#98989d; --accent:#2997ff; --border:rgba(255,255,255,.14);
+    --ok:#30d158; --err:#ff453a;
+  }
+}
+body.panel main { flex:1; width:100%; }
+
+/* Cabecera */
 body.panel header {
-  --hdr-blue:#0071e3;
-  --hdr-hover:12%;
   position:sticky; top:0; z-index:10; padding:10px 16px;
   background:color-mix(in srgb, var(--card) 78%, transparent);
   -webkit-backdrop-filter:saturate(180%) blur(20px); backdrop-filter:saturate(180%) blur(20px);
   border-bottom:1px solid var(--border);
-  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  -webkit-font-smoothing:antialiased;
-}
-@media (prefers-color-scheme: dark) {
-  body.panel header { --hdr-blue:#2997ff; }
 }
 
 /* Marca: cuadrado GT + nombre, y el rol como etiqueta chica al lado */
@@ -28,18 +39,39 @@ body.panel header nav .muted { margin-right:6px; font-size:14px; }
 body.panel header nav button,
 body.panel header nav .ghost-link {
   display:inline-flex; align-items:center; padding:7px 15px; border-radius:980px; border:0;
-  background:color-mix(in srgb, var(--hdr-blue) 12%, transparent); color:var(--hdr-blue);
+  background:color-mix(in srgb, var(--accent) 12%, transparent); color:var(--accent);
   font-size:14px; font-weight:500; line-height:1.3; text-decoration:none;
   transition:background .15s, transform .1s;
 }
 body.panel header nav button:hover,
-body.panel header nav .ghost-link:hover { background:color-mix(in srgb, var(--hdr-blue) 20%, transparent); }
+body.panel header nav .ghost-link:hover { background:color-mix(in srgb, var(--accent) 20%, transparent); }
 body.panel header nav button:active,
 body.panel header nav .ghost-link:active { transform:scale(.97); }
 body.panel header nav button:focus-visible,
-body.panel header nav .ghost-link:focus-visible { outline:2px solid var(--hdr-blue); outline-offset:2px; }
+body.panel header nav .ghost-link:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+/* Listado de eventos del admin: foto cuadrada chica a la izquierda de cada tarjeta */
+body.panel .ev-admin { display:flex; gap:14px; align-items:flex-start; }
+body.panel .ev-admin-body { flex:1; min-width:0; }
+body.panel .ev-thumb { flex:none; width:84px; height:84px; border-radius:14px; object-fit:cover; background:var(--bg); border:1px solid var(--border); }
+body.panel .ev-thumb-date { display:flex; flex-direction:column; align-items:center; justify-content:center; line-height:1; color:var(--text); }
+body.panel .ev-thumb-date b { font-size:28px; font-weight:700; letter-spacing:-.02em; }
+body.panel .ev-thumb-date span { margin-top:5px; font-size:12px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
+
+/* Vista previa del mapa en el formulario del evento */
+body.panel .map-preview { margin-top:8px; border-radius:14px; overflow:hidden; border:1px solid var(--border); }
+body.panel .map-preview iframe { display:block; width:100%; height:200px; border:0; background:var(--bg); }
+
+/* Pie de página: derechos, términos y la firma de la app */
+body.panel .site-foot { padding:28px 16px 24px; text-align:center; font-size:13px; line-height:1.6; color:var(--muted); letter-spacing:.01em; }
+body.panel .site-foot p { margin:0; }
+body.panel .site-foot a { color:var(--muted); text-decoration:underline; text-underline-offset:2px; }
+body.panel .site-foot a:hover { color:var(--text); }
+body.panel .site-foot b { font-weight:600; color:var(--text); }
 
 @media (max-width:560px) {
   body.panel header { padding:10px 12px; }
   body.panel header nav { width:100%; }
+  body.panel .ev-thumb { width:64px; height:64px; border-radius:12px; }
+  body.panel .ev-thumb-date b { font-size:22px; }
 }
