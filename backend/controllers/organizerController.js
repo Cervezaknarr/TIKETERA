@@ -57,7 +57,7 @@ const getMyEvents = async (req, res) => {
     const result = await withLots(events);
     res.json({
       success: true,
-      events: result.map((e, i) => ({ ...e, salesPaused: events[i].salesPaused })),
+      events: result.map((e, i) => ({ ...e, salesPaused: events[i].salesPaused, hasPaymentAccount: Boolean(events[i].paymentAccountId) })),
     });
   } catch (error) {
     serverError(res, error, "Error al obtener los eventos");
@@ -304,7 +304,8 @@ const setSalesPaused = async (req, res) => {
 const activateAccount = async (req, res) => {
   try {
     const event = req.managedEvent;
-    if (!event.salesPaused) {
+    // Con una cuenta ya cobrando hay que pausar para cambiarla; la primera se activa sin pausa
+    if (event.paymentAccountId && !event.salesPaused) {
       return res.status(409).json({
         success: false,
         message: "Pausá las ventas del evento antes de cambiar la cuenta de cobro",

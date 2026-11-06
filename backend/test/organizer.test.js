@@ -270,7 +270,7 @@ test("el organizador agrega una cuenta de Mercado Pago propia: se verifica, se c
   assert.equal((await as("orgA", "POST", `/api/organizer/events/${eventB.id}/payments/accounts`, { name: "x", accessToken: TOKEN_X })).status, 403);
 
   // No aparece en el panel general del admin ni en el de otro organizador
-  assert.deepEqual((await as("admin", "GET", "/api/payment-accounts")).body.accounts, []);
+  assert.equal((await as("admin", "GET", "/api/payment-accounts")).body.accounts, undefined); // no hay cuentas generales
   assert.deepEqual((await as("orgB", "GET", `/api/organizer/events/${eventB.id}/payments`)).body.accounts, []);
   const mine = await as("orgA", "GET", `/api/organizer/events/${eventA.id}/payments`);
   assert.equal(mine.body.accounts.length, 1);
@@ -282,8 +282,18 @@ test("cambiar de cuenta exige pausar las ventas del evento, y el evento cobra co
   const [accountA] = await PaymentAccount.findAll({ where: { eventId: eventA.id } });
   const activate = (who, event, id) => as(who, "POST", `/api/organizer/events/${event.id}/payments/accounts/${id}/activate`);
 
-  // Sin pausar: rechazado
-  assert.equal((await activate("orgA", eventA, accountA.id)).status, 409);
+  // La primera cuenta se activa sin pausar las ventas
+  assert.equal((await activate("orgA", eventA, accountA.id)).status, 200);
+  assert.equal((await Event.findByPk(eventA.id)).paymentAccountId, accountA.id);
+
+  // Cambiar a otra cuenta sin pausar: rechazado
+  const second = (await as("orgA", "POST", `/api/organizer/events/${eventA.id}/payments/accounts`, { name: "Segunda", accessToken: TOKEN_X })).body.account;
+  assert.equal((await activate("orgA", eventA, second.id)).status, 409);
+  assert.equal((await Event.findByPk(eventA.id)).paymentAccountId, accountA.id);
+
+  // El otro evento tiene su cuenta activa para poder vender
+  const accountB = (await as("orgB", "POST", `/api/organizer/events/${eventB.id}/payments/accounts`, { name: "B", accessToken: TOKEN_B })).body.account;
+  assert.equal((await activate("orgB", eventB, accountB.id)).status, 200);
 
   // Pausar frena las compras de ESE evento, no las de otros
   assert.equal((await as("orgA", "PUT", `/api/organizer/events/${eventA.id}/sales-paused`, { paused: true })).status, 200);
@@ -293,7 +303,6 @@ test("cambiar de cuenta exige pausar las ventas del evento, y el evento cobra co
   assert.equal((await as("orgB", "PUT", `/api/organizer/events/${eventA.id}/sales-paused`, { paused: false })).status, 403);
 
   // Pausado: puede activar su cuenta; la de otro evento no
-  const accountB = (await as("orgB", "POST", `/api/organizer/events/${eventB.id}/payments/accounts`, { name: "B", accessToken: TOKEN_B })).body.account;
   assert.equal((await activate("orgA", eventA, accountB.id)).status, 404);
   assert.equal((await activate("orgB", eventA, accountA.id)).status, 403);
   assert.equal((await activate("orgA", eventA, accountA.id)).status, 200);
@@ -307,10 +316,10 @@ test("cambiar de cuenta exige pausar las ventas del evento, y el evento cobra co
   assert.equal(lastPreferenceToken, `Bearer ${TOKEN_A}`);
   assert.equal((await Purchase.findByPk(bought.body.purchase.id)).paymentAccountId, accountA.id);
 
-  // Un evento sin cuenta propia sigue cobrando con la general de la plataforma
+  // Un evento sin cuenta activa no vende: no hay cuenta general que lo cobre
   lastPreferenceToken = null;
-  assert.equal((await checkout(eventFree)).status, 201);
-  assert.equal(lastPreferenceToken, `Bearer ${process.env.MERCADOPAGO_ACCESS_TOKEN}`);
+  assert.equal((await checkout(eventFree)).status, 503);
+  assert.equal(lastPreferenceToken, null);
 });
 
 test("borrar cuentas: no la activa ni la que ya cobró; solo las propias", async () => {
@@ -324,11 +333,9 @@ test("borrar cuentas: no la activa ni la que ya cobró; solo las propias", async
   assert.equal((await del("orgA", eventA, extra.id)).status, 200);
   assert.equal(await PaymentAccount.count({ where: { id: extra.id } }), 0);
 
-  // El admin no puede borrar ni activar cuentas de un evento desde el panel general
+  // Ya no hay rutas generales para cuentas: el admin las maneja por evento
   assert.equal((await as("admin", "DELETE", `/api/payment-accounts/${accountA.id}`)).status, 404);
-  await as("admin", "PUT", "/api/payment-accounts/sales-paused", { paused: true });
   assert.equal((await as("admin", "POST", `/api/payment-accounts/${accountA.id}/activate`)).status, 404);
-  await as("admin", "PUT", "/api/payment-accounts/sales-paused", { paused: false });
 });
 
 test("borrar un organizador deja sus eventos sin organizador", async () => {

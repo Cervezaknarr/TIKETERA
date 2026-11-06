@@ -276,6 +276,14 @@ const createCheckoutSession = async (req, res) => {
       });
     }
 
+    // Cada evento cobra con su propia cuenta de Mercado Pago: sin una activa no se vende
+    if (getProvider().name === "mercadopago" && !event.paymentAccountId) {
+      return res.status(503).json({
+        success: false,
+        message: "Este evento todavía no tiene el cobro configurado. Probá de nuevo más tarde",
+      });
+    }
+
     // Topes contra el acaparamiento: sin ellos, una sola compra o un bot podría
     // dejar el evento "agotado" reservando todo sin pagar. El tope cuenta todas
     // las entradas del carrito
@@ -858,4 +866,6 @@ module.exports = {
   getPurchaseTickets,
   resendPurchaseEmail,
   voidPurchaseFromPanel,
+  sendPurchaseEmail,
+  voidPurchase,
 };

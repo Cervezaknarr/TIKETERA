@@ -16,33 +16,30 @@ const present = (account) => ({
 });
 
 /**
- * @desc    Cuentas de Mercado Pago, estado de las ventas y compras sin pagar
+ * @desc    Estado general de los cobros: pausa de ventas y compras sin pagar. Las cuentas de
+ *          Mercado Pago son de cada evento (se manejan en /api/organizer/events/:id/payments)
  * @route   GET /api/payment-accounts
  * @access  Admin
  */
-const getPaymentAccounts = async (req, res) => {
+const getPaymentStatus = async (req, res) => {
   try {
-    const accounts = await PaymentAccount.findAll({ where: { eventId: null }, order: [["createdAt", "ASC"]] });
     res.json({
       success: true,
-      accounts: accounts.map(present),
       salesPaused: await isSalesPaused(),
       // Compras que todavía pueden recibir un aviso de pago
       pendingPurchases: await Purchase.count({ where: { status: "pending" } }),
       provider: process.env.PAYMENT_PROVIDER || "mock",
-      envToken: Boolean(process.env.MERCADOPAGO_ACCESS_TOKEN),
-      keyConfigured: Boolean(process.env.PAYMENT_ACCOUNTS_KEY),
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ success: false, message: "Error al obtener las cuentas de pago" });
+    res.status(500).json({ success: false, message: "Error al obtener el estado de los cobros" });
   }
 };
 
 /**
  * @desc    Agregar una cuenta (queda inactiva hasta que se active)
- * @route   POST /api/payment-accounts
- * @access  Admin (o el organizador del evento, desde /api/organizer)
+ * @route   POST /api/organizer/events/:eventId/payments/accounts
+ * @access  Admin u organizador del evento
  * @body    { name, accessToken }
  */
 const createPaymentAccount = async (req, res) => {
@@ -112,91 +109,6 @@ const createPaymentAccount = async (req, res) => {
 };
 
 /**
- * @desc    Dejar una cuenta como la activa. Con ventas pausadas: así nadie compra a
- *          mitad del cambio
- * @route   POST /api/payment-accounts/:id/activate
- * @access  Admin
- */
-const activatePaymentAccount = async (req, res) => {
-  try {
-    if (!(await isSalesPaused())) {
-      return res.status(409).json({
-        success: false,
-        message: "Pausá las ventas antes de cambiar la cuenta de cobro",
-      });
-    }
-
-    let previousId = null;
-    const result = await sequelize.transaction(async (transaction) => {
-      // Solo cuentas generales: las que cargan los organizadores son de cada evento
-      const account = await PaymentAccount.findOne({ where: { id: req.params.id, eventId: null }, transaction });
-      if (!account) return null;
-      const prev = await PaymentAccount.findOne({ where: { eventId: null, active: true }, transaction });
-      previousId = prev ? prev.id : null;
-      await PaymentAccount.update({ active: false }, { where: { eventId: null }, transaction });
-      account.active = true;
-      await account.save({ transaction });
-      await audit(req, {
-        action: "PAYMENT_ACCOUNT_ACTIVATE",
-        entityType: "PaymentAccount",
-        entityId: account.id,
-        details: { activeAccountId: { from: previousId, to: account.id } },
-        transaction,
-        strict: true,
-      });
-      return account;
-    });
-
-    if (!result) {
-      return res.status(404).json({ success: false, message: "Cuenta no encontrada" });
-    }
-    res.json({ success: true, account: present(result) });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, message: "Error al activar la cuenta" });
-  }
-};
-
-/**
- * @desc    Borrar una cuenta que no está activa ni se usó en ninguna compra
- * @route   DELETE /api/payment-accounts/:id
- * @access  Admin
- */
-const deletePaymentAccount = async (req, res) => {
-  try {
-    const account = await PaymentAccount.findOne({ where: { id: req.params.id, eventId: null } });
-    if (!account) {
-      return res.status(404).json({ success: false, message: "Cuenta no encontrada" });
-    }
-    if (account.active) {
-      return res.status(409).json({ success: false, message: "No se puede borrar la cuenta activa" });
-    }
-    // Sus compras necesitan el token para confirmar los pagos
-    if (await Purchase.count({ where: { paymentAccountId: account.id } })) {
-      return res.status(409).json({
-        success: false,
-        message: "Esta cuenta ya cobró compras y su token hace falta para confirmar pagos",
-      });
-    }
-    await sequelize.transaction(async (transaction) => {
-      await account.destroy({ transaction });
-      await audit(req, {
-        action: "PAYMENT_ACCOUNT_DELETE",
-        entityType: "PaymentAccount",
-        entityId: account.id,
-        details: { name: account.name },
-        transaction,
-        strict: true,
-      });
-    });
-    res.json({ success: true });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, message: "Error al borrar la cuenta" });
-  }
-};
-
-/**
  * @desc    Pausar o reanudar las ventas
  * @route   PUT /api/payment-accounts/sales-paused
  * @access  Admin
@@ -224,9 +136,7 @@ const updateSalesPaused = async (req, res) => {
 
 module.exports = {
   present,
-  getPaymentAccounts,
+  getPaymentStatus,
   createPaymentAccount,
-  activatePaymentAccount,
-  deletePaymentAccount,
   updateSalesPaused,
 };

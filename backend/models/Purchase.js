@@ -73,6 +73,12 @@ const Purchase = sequelize.define("Purchase", {
     defaultValue: DataTypes.NOW,
   },
   // Token privado para el link "ver mis entradas" (no requiere cuenta)
+  // Cortesía: entradas que emite el admin sin pago. Total 0, sin lote ni pasarela
+  courtesy: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
   accessToken: {
     type: DataTypes.STRING(64),
     allowNull: false,

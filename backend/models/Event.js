@@ -90,6 +90,13 @@ const Event = sequelize.define("Event", {
     type: DataTypes.ENUM("draft", "published", "cancelled"),
     defaultValue: "published",
   },
+  // No listado: se vende igual, pero no aparece en el listado público; solo se entra con
+  // su link (/e/<slug>). No es privado: quien conozca el link lo ve
+  unlisted: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
 });
 
 Event.beforeCreate(async (event, options) => {

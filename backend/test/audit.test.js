@@ -301,23 +301,24 @@ test("STAFF_CREATE / STAFF_UPDATE / STAFF_DELETE del organizador: autor, evento 
 
 // (3) Cuentas de pago
 test("PAYMENT_ACCOUNT_CREATE/ACTIVATE/DELETE (admin): ninguna fila contiene el token ni su hint", async () => {
-  const created = await asAdmin("POST", "/api/payment-accounts", { name: "Cuenta Auditada", accessToken: MP_TOKEN });
+  const accounts = `/api/organizer/events/${event.id}/payments/accounts`;
+  const created = await asAdmin("POST", accounts, { name: "Cuenta Auditada", accessToken: MP_TOKEN });
   assert.equal(created.status, 201);
   const id = created.body.account.id;
   const c = await one({ action: "PAYMENT_ACCOUNT_CREATE", entityId: id });
   assert.equal(c.actorId, admin.id);
   assert.equal(c.details.name, "Cuenta Auditada");
 
-  const other = await asAdmin("POST", "/api/payment-accounts", { name: "Cuenta Dos", accessToken: "APP_USR-otro-token-9999999999" });
-  assert.equal((await asAdmin("PUT", "/api/payment-accounts/sales-paused", { paused: true })).status, 200);
-  const act = await asAdmin("POST", `/api/payment-accounts/${id}/activate`);
+  const other = await asAdmin("POST", accounts, { name: "Cuenta Dos", accessToken: "APP_USR-otro-token-9999999999" });
+  assert.equal((await asAdmin("PUT", `/api/organizer/events/${event.id}/sales-paused`, { paused: true })).status, 200);
+  const act = await asAdmin("POST", `${accounts}/${id}/activate`);
   assert.equal(act.status, 200);
   const a = await one({ action: "PAYMENT_ACCOUNT_ACTIVATE", entityId: id });
   assert.equal(a.actorId, admin.id);
   assert.equal(a.details.activeAccountId.to, id);
-  assert.equal((await asAdmin("PUT", "/api/payment-accounts/sales-paused", { paused: false })).status, 200);
+  assert.equal((await asAdmin("PUT", `/api/organizer/events/${event.id}/sales-paused`, { paused: false })).status, 200);
 
-  const del = await asAdmin("DELETE", `/api/payment-accounts/${other.body.account.id}`);
+  const del = await asAdmin("DELETE", `${accounts}/${other.body.account.id}`);
   assert.equal(del.status, 200);
   const d = await one({ action: "PAYMENT_ACCOUNT_DELETE", entityId: other.body.account.id });
   assert.equal(d.actorId, admin.id);
@@ -357,7 +358,7 @@ test("cuentas de pago del organizador: acciones con eventId y sin token", async 
 
 test("alta de cuenta con token inválido (400) no deja fila", async () => {
   const before = await AuditLog.count({ where: { action: "PAYMENT_ACCOUNT_CREATE" } });
-  const res = await asAdmin("POST", "/api/payment-accounts", { name: "Mala", accessToken: "corto" });
+  const res = await asAdmin("POST", `/api/organizer/events/${event.id}/payments/accounts`, { name: "Mala", accessToken: "corto" });
   assert.equal(res.status, 400);
   assert.equal(await AuditLog.count({ where: { action: "PAYMENT_ACCOUNT_CREATE" } }), before);
 });
@@ -924,26 +925,27 @@ test("estricta: si falla la auditoría, la cuenta de pago no se crea, activa ni 
   let restore = failAuditFor(["PAYMENT_ACCOUNT_CREATE"]);
   let res;
   try {
-    res = await captureLogs(() => asAdmin("POST", "/api/payment-accounts", { name: "Falla", accessToken: "APP_USR-token-que-no-queda-1234567" }));
+    res = await captureLogs(() => asAdmin("POST", `/api/organizer/events/${event.id}/payments/accounts`, { name: "Falla", accessToken: "APP_USR-token-que-no-queda-1234567" }));
   } finally { restore(); }
   assert.equal(res.result.status, 500);
   assert.equal(await countAccounts(), before);
 
   // Activar (admin)
-  const target = (await asAdmin("POST", "/api/payment-accounts", { name: "Objetivo", accessToken: "APP_USR-token-objetivo-7654321000" })).body.account;
-  await asAdmin("PUT", "/api/payment-accounts/sales-paused", { paused: true });
+  const target = (await asAdmin("POST", `/api/organizer/events/${event.id}/payments/accounts`, { name: "Objetivo", accessToken: "APP_USR-token-objetivo-7654321000" })).body.account;
+  await asAdmin("PUT", `/api/organizer/events/${event.id}/sales-paused`, { paused: true });
+  const activeBefore = (await Event.findByPk(event.id)).paymentAccountId;
   restore = failAuditFor(["PAYMENT_ACCOUNT_ACTIVATE"]);
   try {
-    res = await captureLogs(() => asAdmin("POST", `/api/payment-accounts/${target.id}/activate`));
+    res = await captureLogs(() => asAdmin("POST", `/api/organizer/events/${event.id}/payments/accounts/${target.id}/activate`));
   } finally { restore(); }
   assert.equal(res.result.status, 500);
-  assert.equal((await PaymentAccount.findByPk(target.id)).active, false);
-  await asAdmin("PUT", "/api/payment-accounts/sales-paused", { paused: false });
+  assert.equal((await Event.findByPk(event.id)).paymentAccountId, activeBefore);
+  await asAdmin("PUT", `/api/organizer/events/${event.id}/sales-paused`, { paused: false });
 
   // Borrar (admin)
   restore = failAuditFor(["PAYMENT_ACCOUNT_DELETE"]);
   try {
-    res = await captureLogs(() => asAdmin("DELETE", `/api/payment-accounts/${target.id}`));
+    res = await captureLogs(() => asAdmin("DELETE", `/api/organizer/events/${event.id}/payments/accounts/${target.id}`));
   } finally { restore(); }
   assert.equal(res.result.status, 500);
   assert.ok(await PaymentAccount.findByPk(target.id), "la cuenta no debe borrarse");

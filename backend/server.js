@@ -20,6 +20,7 @@ const purchaseRoutes = require("./routes/purchaseRoutes");
 const checkinRoutes = require("./routes/checkinRoutes");
 const userRoutes = require("./routes/userRoutes");
 const paymentAccountRoutes = require("./routes/paymentAccountRoutes");
+const courtesyRoutes = require("./routes/courtesyRoutes");
 const organizerRoutes = require("./routes/organizerRoutes");
 const auditRoutes = require("./routes/auditRoutes");
 
@@ -89,6 +90,7 @@ app.use("/api/purchases", purchaseRoutes);
 app.use("/api/checkin", checkinRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/payment-accounts", paymentAccountRoutes);
+app.use("/api/courtesies", courtesyRoutes);
 app.use("/api/organizer", organizerRoutes);
 app.use("/api/audit", auditRoutes);
 

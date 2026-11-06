@@ -12,7 +12,7 @@
 const { request } = require("./http");
 
 const { paymentWindowMinutes } = require("../paymentWindow");
-const { getActiveAccount, tokenOfAccount } = require("../paymentAccounts");
+const { tokenOfAccount } = require("../paymentAccounts");
 const { decrypt } = require("../secrets");
 
 const API = "https://api.mercadopago.com";
@@ -36,17 +36,15 @@ const STATUS_MAP = {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Credenciales de Mercado Pago. Con `accountId` se usa esa cuenta (así se confirma
-// un pago aunque la cuenta activa haya cambiado); sin él, la cuenta activa del panel
-// y, si no hay ninguna, el token de MERCADOPAGO_ACCESS_TOKEN
+// un pago aunque el evento haya cambiado de cuenta); sin él, el token de
+// MERCADOPAGO_ACCESS_TOKEN, que solo queda para confirmar compras anteriores a las
+// cuentas por evento: un pago nuevo siempre se crea con la cuenta de su evento
 const getConfig = async (accountId) => {
   if (accountId) {
     const accessToken = await tokenOfAccount(accountId);
     if (!accessToken) throw new Error(`Mercado Pago: la cuenta ${accountId} no existe`);
     return { accountId, accessToken };
   }
-  const active = accountId === undefined ? await getActiveAccount() : null;
-  if (active) return { accountId: active.id, accessToken: decrypt(active.accessToken) };
-
   const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
   if (!accessToken) {
     throw new Error(
@@ -92,9 +90,9 @@ module.exports = {
    *   accountId: la cuenta con la que se creó el pago (se guarda en la compra)
    */
   async createPayment({ purchase, event, items }) {
-    // Si el evento tiene cuenta propia (la cargó su organizador) se cobra con ella; si no,
-    // con la cuenta activa de la plataforma
-    const config = await getConfig(event.paymentAccountId || undefined);
+    // Cada evento cobra con su cuenta activa; el checkout ya corta la venta si no tiene una
+    if (!event.paymentAccountId) throw new Error("Mercado Pago: el evento no tiene una cuenta de cobro activa");
+    const config = await getConfig(event.paymentAccountId);
     const frontend = process.env.FRONTEND_URL || "http://localhost:5500";
     const returnUrl = `${frontend}/#/entradas/${purchase.accessToken}`;
 

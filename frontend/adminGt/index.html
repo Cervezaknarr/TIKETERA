@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Kaiser Tikets · Admin</title>
+<title>GT Tickets · Admin</title>
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <header>
-  <h1>🎟️ Kaiser Tikets <span class="muted">· Admin</span></h1>
+  <h1><svg viewBox="0 0 28 28" width="26" height="26" role="img" aria-label="GT" style="vertical-align:-6px;margin-right:8px"><rect width="28" height="28" rx="8" fill="currentColor"/><text x="14" y="19.2" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="13.5" font-weight="800" letter-spacing="-.5" fill="var(--bg)">GT</text></svg>GT Tickets <span class="muted">· Admin</span></h1>
   <nav id="nav"></nav>
 </header>
 <main>
@@ -43,7 +43,7 @@ function go(view, arg) {
   if (!session.token) {
     return renderLogin('Administración', ['admin'], (token, user) => { auth.set(token, user); go('events'); });
   }
-  ({ events: viewEvents, edit: viewEdit, buyers: viewBuyers, users: viewUsers, payments: viewPayments }[view])(arg);
+  ({ events: viewEvents, edit: viewEdit, buyers: viewBuyers, courtesies: viewCourtesies, users: viewUsers, payments: viewPayments }[view])(arg);
 }
 
 const eventStatus = { published: 'Publicado', draft: 'Borrador', cancelled: 'Cancelado' };
@@ -59,7 +59,7 @@ async function viewEvents() {
     $('view').innerHTML = `<h2>Eventos</h2>` + (events.length
       ? `<div class="grid">${events.map((e, i) => `
         <div class="card">
-          <h3>${esc(e.title)} <span class="tag ${e.status === 'published' ? 'completed' : 'failed'}">${eventStatus[e.status]}</span>${ageOf(e) ? ` <span class="tag">+${ageOf(e)}</span>` : ''}</h3>
+          <h3>${esc(e.title)} <span class="tag ${e.status === 'published' ? 'completed' : 'failed'}">${eventStatus[e.status]}</span>${e.unlisted ? ' <span class="tag">No listado</span>' : ''}${ageOf(e) ? ` <span class="tag">+${ageOf(e)}</span>` : ''}</h3>
           <div class="muted">📅 ${new Date(e.date).toLocaleString('es-AR')}<br>📍 ${esc(e.location)}<br>🔗 <a href="/e/${esc(e.slug)}" target="_blank">${location.origin}/e/${esc(e.slug)}</a></div>
           <div class="lots">${e.lots.map(l => `
             <div class="lot ${l.ticketsAvailable < 1 ? 'sold' : ''}">
@@ -69,6 +69,7 @@ async function viewEvents() {
             </div>`).join('')}</div>
           <div class="muted">${e.ticketsAvailable} disponibles${stats[i] ? ` · ${stats[i].total} vendidas · ${stats[i].admitted} ingresaron` : ''}</div>
           <p><button onclick="go('buyers','${e.id}')">Compradores</button>
+             <button class="ghost" onclick="go('courtesies','${e.id}')">Cortesías</button>
              <button class="ghost" onclick="go('edit','${e.id}')">Editar</button></p>
         </div>`).join('')}</div>`
       : `<p class="muted">Todavía no hay eventos.</p><p><button onclick="go('edit')">Crear el primero</button></p>`);
@@ -121,7 +122,9 @@ async function viewEdit(id) {
       <select id="eStatus">
         ${Object.entries(eventStatus).map(([v, t]) => `<option value="${v}" ${e.status === v ? 'selected' : ''}>${t}</option>`).join('')}
       </select>
-      <p class="muted">Solo los eventos publicados se ven y se venden en la web. Para frenar la venta, pasalo a borrador.</p>`;
+      <p class="muted">Solo los eventos publicados se ven y se venden en la web. Para frenar la venta, pasalo a borrador.</p>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="eUnlisted" style="width:auto;margin:0" ${e.unlisted ? 'checked' : ''}> No listado: solo se entra con el link</label>
+      <p class="muted" style="margin:4px 0 12px">No aparece en la portada del sitio, pero se vende igual. Quien tenga el link <b>${esc(location.origin)}/e/${esc(e.slug || 'nombre-del-evento')}</b> puede verlo y comprar. No es un acceso privado.</p>`;
 
   if (!id) {
     $('view').innerHTML = `
@@ -283,7 +286,7 @@ async function submitEvent(ev, id) {
   const body = {
     title: $('eTitle').value, description: $('eDesc').value,
     date: new Date($('eDate').value).toISOString(), location: $('eLoc').value,
-    status: $('eStatus').value, organizerId: $('eOrganizer').value || null, minAge: $('eMinAge').value === '' ? null : Number($('eMinAge').value),
+    status: $('eStatus').value, unlisted: $('eUnlisted').checked, organizerId: $('eOrganizer').value || null, minAge: $('eMinAge').value === '' ? null : Number($('eMinAge').value),
   };
   if (coverData !== undefined) body.imageUrl = coverData;
   // Al crear van los lotes. Al editar solo los datos del evento: los lotes (precio y
@@ -380,14 +383,17 @@ async function viewBuyers(eventId) {
 
   const paid = buyers.purchases.filter(p => p.status === 'completed');
   const tickets = paid.flatMap(p => p.Tickets);
+  const sold = paid.filter(p => !p.courtesy);
+  const courtesyTickets = paid.filter(p => p.courtesy).flatMap(p => p.Tickets);
   const stat = (label, value) => `<div class="card stat"><div class="muted">${label}</div><div class="statv">${value}</div></div>`;
 
   $('view').innerHTML = `
   <h2>${esc(buyers.event.title)}</h2>
   <p class="muted">📅 ${new Date(buyers.event.date).toLocaleString('es-AR')} · 📍 ${esc(buyers.event.location)}</p>
   <div class="stats">
-    ${stat('Entradas vendidas', tickets.length)}
+    ${stat('Entradas vendidas', sold.flatMap(p => p.Tickets).length)}
     ${stat('Recaudado', money(paid.reduce((s, p) => s + Number(p.totalPrice), 0)))}
+    ${courtesyTickets.length ? stat('Cortesías', courtesyTickets.length) : ''}
     ${stat('Ingresaron', `${tickets.filter(t => t.status === 'used').length} / ${tickets.length}`)}
     ${stat('Disponibles', buyers.event.ticketsAvailable)}
   </div>
@@ -406,6 +412,7 @@ async function viewBuyers(eventId) {
     <div id="bList"></div>
   </div>
   <p><button class="ghost" onclick="go('events')">Volver a eventos</button>
+     <button class="ghost" onclick="go('courtesies','${buyers.event.id}')">Cortesías</button>
      <button class="ghost" onclick="go('edit','${buyers.event.id}')">Editar evento</button></p>`;
   renderBuyers();
 }
@@ -424,7 +431,7 @@ function renderBuyers() {
     <thead><tr><th>Comprador</th><th>Entradas</th><th>Total</th><th>Estado</th><th>Fecha</th><th></th></tr></thead>
     <tbody>${list.map(p => `
       <tr>
-        <td><b>${esc(p.buyerName)}</b><br><span class="muted">${esc(p.buyerEmail)}</span></td>
+        <td><b>${esc(p.buyerName)}</b>${p.courtesy ? ' <span class="tag">Cortesía</span>' : ''}<br><span class="muted">${esc(p.buyerEmail)}</span></td>
         <td>${p.quantity}${p.lotName ? ` · <b>${esc(p.lotName)}</b>` : ''}${p.Tickets.length ? `<br>${p.Tickets.map(t => `<span class="tag ${t.status}" title="${t.status === 'used' ? 'Ingresó a las ' + time(t.usedAt) : ''}">${esc(t.code)}${t.status === 'used' ? ' ✓' : ''}</span>`).join(' ')}` : ''}</td>
         <td>${money(p.totalPrice)}</td>
         <td><span class="tag ${p.status}">${purchaseStatus[p.status]}</span></td>
@@ -463,29 +470,157 @@ function exportBuyersCsv() {
   URL.revokeObjectURL(a.href);
 }
 
-// ---------- Pagos: cuentas de Mercado Pago y pausa de ventas ----------
+// ---------- Cortesías: entradas sin pago, por evento ----------
+let courtesyData = { event: null, courtesies: [] };
+
+async function viewCourtesies(eventId) {
+  $('view').innerHTML = '<p class="muted">Cargando…</p>';
+  try { courtesyData = await api('/courtesies/event/' + eventId, { auth: true }); }
+  catch (err) { $('view').innerHTML = ''; return flash(err.message, 'err'); }
+  const { event, courtesies } = courtesyData;
+  const time = (d) => new Date(d).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+
+  $('view').innerHTML = `
+  <h2>Cortesías · ${esc(event.title)}</h2>
+  <p class="muted">Entradas sin pago, solo de este evento. Cada una tiene su propio código y en la puerta funciona igual que una entrada común. No descuentan cupo de ningún lote.</p>
+
+  <div class="card" style="margin-bottom:14px">
+    <h3>Nueva cortesía</h3>
+    <form onsubmit="submitCourtesy(event, '${event.id}')">
+      <label>Nombre de quien la recibe</label><input id="cName" required maxlength="100" placeholder="Ana Pérez">
+      <label>Email al que se la enviás</label><input id="cEmail" type="email" required maxlength="254" placeholder="ana@ejemplo.com">
+      <label>Cantidad de entradas (una por persona)</label><input id="cQty" type="number" min="1" max="20" value="1" required>
+      <p class="muted">Al generarla no se manda ningún mail: lo mandás vos con el botón «Enviar mail».</p>
+      <p><button>Generar cortesía</button></p>
+    </form>
+  </div>
+
+  <div class="card table-wrap">
+    <h3>Cortesías generadas</h3>
+    ${courtesies.length ? `<table>
+      <thead><tr><th>Destinatario</th><th>Entradas</th><th>Estado</th><th>Fecha</th><th></th></tr></thead>
+      <tbody>${courtesies.map(c => `
+        <tr>
+          <td><b>${esc(c.buyerName)}</b><br><span class="muted">${esc(c.buyerEmail)}</span></td>
+          <td>${c.Tickets.map(t => `<span class="tag ${t.status}" title="${t.status === 'used' ? 'Ingresó a las ' + time(t.usedAt) : ''}">${esc(t.code)}${t.status === 'used' ? ' ✓' : ''}</span>`).join(' ')}</td>
+          <td>${c.status === 'completed' ? '<span class="tag completed">Activa</span>' : '<span class="tag refunded">Anulada</span>'}</td>
+          <td class="muted">${new Date(c.createdAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}</td>
+          <td class="actions">${c.status === 'completed' ? `
+            <button class="ghost" data-email="${esc(c.buyerEmail)}" onclick="sendCourtesy('${event.id}', '${c.id}', this)">Enviar mail</button>
+            <button class="ghost" data-email="${esc(c.buyerEmail)}" data-name="${esc(c.buyerName)}" onclick="editCourtesy('${event.id}', '${c.id}', this)">Cambiar datos</button>
+            <button class="ghost" onclick="copyPurchaseLink('${esc(c.accessToken)}', this)">Copiar link</button>
+            <button class="ghost danger" data-name="${esc(c.buyerName)}" onclick="voidCourtesy('${event.id}', '${c.id}', this)">Anular</button>` : ''}</td>
+        </tr>`).join('')}
+      </tbody></table>` : '<p class="muted">Todavía no generaste cortesías para este evento.</p>'}
+  </div>
+  <p><button class="ghost" onclick="go('events')">Volver a eventos</button>
+     <button class="ghost" onclick="go('buyers','${event.id}')">Ver compradores</button></p>`;
+}
+
+async function submitCourtesy(ev, eventId) {
+  ev.preventDefault();
+  try {
+    await api('/courtesies/event/' + eventId, { method: 'POST', auth: true, body: { name: $('cName').value, email: $('cEmail').value, quantity: Number($('cQty').value) } });
+    await viewCourtesies(eventId);
+    flash('Cortesía generada. Todavía no se envió: usá «Enviar mail» cuando quieras.');
+  } catch (err) { flash(err.message, 'err'); }
+}
+async function sendCourtesy(eventId, id, btn) {
+  if (!confirm('¿Enviar las entradas a ' + btn.dataset.email + '?')) return;
+  btn.disabled = true;
+  try {
+    const { message } = await api(`/courtesies/event/${eventId}/${id}/send`, { method: 'POST', auth: true });
+    flash(message);
+  } catch (err) { flash(err.message, 'err'); }
+  finally { btn.disabled = false; }
+}
+async function editCourtesy(eventId, id, btn) {
+  const name = window.prompt('Nombre de quien la recibe:', btn.dataset.name);
+  if (name === null) return;
+  const email = window.prompt('Email al que se la enviás:', btn.dataset.email);
+  if (email === null) return;
+  try {
+    await api(`/courtesies/event/${eventId}/${id}`, { method: 'PUT', auth: true, body: { name, email } });
+    await viewCourtesies(eventId);
+    flash('Datos actualizados. Si ya la habías enviado, usá «Enviar mail» para mandarla de nuevo.');
+  } catch (err) { flash(err.message, 'err'); }
+}
+async function voidCourtesy(eventId, id, btn) {
+  if (!confirm('¿Anular la cortesía de ' + btn.dataset.name + '? Sus entradas dejarán de valer en la puerta (las que ya entraron no se tocan).')) return;
+  btn.disabled = true;
+  try {
+    await api(`/courtesies/event/${eventId}/${id}/void`, { method: 'POST', auth: true });
+    await viewCourtesies(eventId);
+    flash('Cortesía anulada');
+  } catch (err) { btn.disabled = false; flash(err.message, 'err'); }
+}
+
+// ---------- Pagos: pausa general y cuentas de Mercado Pago por evento ----------
 async function viewPayments() {
   $('view').innerHTML = '<p class="muted">Cargando…</p>';
-  let d;
-  try { d = await api('/payment-accounts', { auth: true }); } catch (err) { $('view').innerHTML = ''; return flash(err.message, 'err'); }
-  const active = d.accounts.find(a => a.active);
-  const charging = d.provider !== 'mercadopago' ? `la pasarela <b>${esc(d.provider)}</b>`
-    : active ? `<b>${esc(active.name)}</b> (…${esc(active.tokenHint)})`
-    : d.envToken ? 'el token de las variables de entorno de Render' : '<b>ninguna cuenta</b>: no se puede cobrar';
+  let d, events;
+  try {
+    d = await api('/payment-accounts', { auth: true });
+    ({ events } = await api('/organizer/events', { auth: true }));
+  } catch (err) { $('view').innerHTML = ''; return flash(err.message, 'err'); }
 
   $('view').innerHTML = `
   <h2>Pagos</h2>
   <div class="card" style="margin-bottom:14px">
-    <h3>Ventas ${d.salesPaused ? '<span class="tag failed">Pausadas</span>' : '<span class="tag completed">Abiertas</span>'}</h3>
-    <p class="muted">Hoy se cobra con ${charging}.<br>
-      Compras sin terminar de pagar: <b>${d.pendingPurchases}</b>. Las que ya están en curso se siguen confirmando con la cuenta con la que se crearon.</p>
+    <h3>Ventas de toda la plataforma ${d.salesPaused ? '<span class="tag failed">Pausadas</span>' : '<span class="tag completed">Abiertas</span>'}</h3>
+    <p class="muted">Pausa general de emergencia: frena las compras de todos los eventos. Compras sin terminar de pagar: <b>${d.pendingPurchases}</b>.</p>
     <p><button class="${d.salesPaused ? '' : 'danger'}" onclick="setSalesPaused(${!d.salesPaused})">${d.salesPaused ? 'Reanudar ventas' : 'Pausar ventas'}</button></p>
-    <p class="muted">Para cambiar de cuenta: pausá las ventas, activá la otra cuenta y reanudá. Mientras estén pausadas nadie puede iniciar una compra nueva.</p>
+  </div>
+
+  <div class="card table-wrap">
+    <h3>Cobros por evento</h3>
+    <p class="muted">Cada evento cobra con su propia cuenta de Mercado Pago. Podés cargar varias por evento y dejar una activa; sin una activa el evento no puede vender.${d.provider !== 'mercadopago' ? ` La pasarela configurada es <b>${esc(d.provider)}</b>: las cuentas solo se usan con Mercado Pago.` : ''}</p>
+    ${events.length ? `<table>
+      <thead><tr><th>Evento</th><th>Cobro</th><th></th></tr></thead>
+      <tbody>${events.map(e => `
+        <tr>
+          <td><b>${esc(e.title)}</b></td>
+          <td>${e.hasPaymentAccount ? '<span class="tag completed">Con cuenta activa</span>' : '<span class="tag failed">Sin cuenta: no vende</span>'}${e.salesPaused ? ' <span class="tag">Ventas pausadas</span>' : ''}</td>
+          <td><button class="ghost" onclick="viewEventPayments('${e.id}')">Administrar cobro</button></td>
+        </tr>`).join('')}
+      </tbody></table>` : '<p class="muted">Todavía no hay eventos.</p>'}
+  </div>`;
+}
+
+async function setSalesPaused(paused) {
+  if (!paused || confirm('¿Pausar las ventas de TODOS los eventos? Nadie va a poder iniciar compras hasta que las reanudes.')) {
+    try {
+      await api('/payment-accounts/sales-paused', { method: 'PUT', auth: true, body: { paused } });
+      await viewPayments();
+      flash(paused ? 'Ventas pausadas' : 'Ventas reanudadas');
+    } catch (err) { flash(err.message, 'err'); }
+  }
+}
+
+// Cobro de un evento: cuentas, cuenta activa y pausa propia del evento
+async function viewEventPayments(eventId) {
+  $('view').innerHTML = '<p class="muted">Cargando…</p>';
+  let d;
+  try { d = await api(`/organizer/events/${eventId}/payments`, { auth: true }); }
+  catch (err) { $('view').innerHTML = ''; return flash(err.message, 'err'); }
+  const active = d.accounts.find(a => a.active);
+  const charging = d.provider !== 'mercadopago' ? `la pasarela <b>${esc(d.provider)}</b>`
+    : active ? `<b>${esc(active.name)}</b> (…${esc(active.tokenHint)})`
+    : '<b>ninguna cuenta</b>: hasta que actives una, este evento no puede vender';
+
+  $('view').innerHTML = `
+  <p><button class="ghost" onclick="go('payments')">Volver a Pagos</button></p>
+  <h2>Cobro · ${esc(d.event.title)}</h2>
+  <div class="card" style="margin-bottom:14px">
+    <h3>Ventas del evento ${d.salesPaused ? '<span class="tag failed">Pausadas</span>' : '<span class="tag completed">Abiertas</span>'}</h3>
+    <p class="muted">Este evento cobra con ${charging}.<br>
+      Compras sin terminar de pagar: <b>${d.pendingPurchases}</b>. Las que ya están en curso se siguen confirmando con la cuenta con la que se crearon.</p>
+    <p><button class="${d.salesPaused ? '' : 'danger'}" onclick="setEventSalesPaused('${eventId}', ${!d.salesPaused})">${d.salesPaused ? 'Reanudar ventas' : 'Pausar ventas'}</button></p>
+    <p class="muted">Para cobrar con otra cuenta: pausá las ventas del evento, activá la otra cuenta y reanudá (la primera se activa sin pausar).</p>
   </div>
 
   <div class="card table-wrap" style="margin-bottom:14px">
-    <h3>Cuentas de Mercado Pago</h3>
-    ${d.provider !== 'mercadopago' ? `<p class="muted">La pasarela configurada es <b>${esc(d.provider)}</b>: las cuentas solo se usan con Mercado Pago.</p>` : ''}
+    <h3>Cuentas de Mercado Pago de este evento</h3>
     ${d.accounts.length ? `<table>
       <thead><tr><th>Cuenta</th><th>Token</th><th>Estado</th><th></th></tr></thead>
       <tbody>${d.accounts.map(a => `
@@ -494,18 +629,18 @@ async function viewPayments() {
           <td class="muted">…${esc(a.tokenHint)}</td>
           <td>${a.active ? '<span class="tag completed">Activa</span>' : '<span class="tag">Inactiva</span>'}</td>
           <td style="white-space:nowrap">
-            ${a.active ? '' : `<button class="ghost" ${d.salesPaused ? '' : 'disabled title="Pausá las ventas para cambiar de cuenta"'} onclick="activateAccount('${a.id}', this.dataset.name)" data-name="${esc(a.name)}">Activar</button>
-            <button class="ghost danger" onclick="deleteAccount('${a.id}', this.dataset.name)" data-name="${esc(a.name)}">Borrar</button>`}
+            ${a.active ? '' : `<button class="ghost" ${d.salesPaused || !active ? '' : 'disabled title="Pausá las ventas del evento para cambiar de cuenta"'} onclick="activateAccount('${eventId}', '${a.id}', this.dataset.name)" data-name="${esc(a.name)}">Activar</button>
+            <button class="ghost danger" onclick="deleteAccount('${eventId}', '${a.id}', this.dataset.name)" data-name="${esc(a.name)}">Borrar</button>`}
           </td>
         </tr>`).join('')}
-      </tbody></table>` : '<p class="muted">Todavía no cargaste ninguna cuenta.</p>'}
+      </tbody></table>` : '<p class="muted">Todavía no cargaste ninguna cuenta. Cargá una y activala para poder vender.</p>'}
   </div>
 
   <div class="card">
-    <h3>Agregar una cuenta</h3>
+    <h3>Agregar una cuenta a este evento</h3>
     ${d.keyConfigured ? '' : '<p class="muted"><b>Falta configurar PAYMENT_ACCOUNTS_KEY</b> en Render (una frase larga y secreta): con ella se cifran los tokens. Sin esa variable no se pueden guardar cuentas.</p>'}
-    <p class="muted">Usá el <b>Access Token de producción</b> de la aplicación de Mercado Pago de esa cuenta. Se verifica con Mercado Pago, se guarda cifrado y no se vuelve a mostrar.</p>
-    <form onsubmit="submitAccount(event)">
+    <p class="muted">Usá el <b>Access Token de producción</b> de la aplicación de Mercado Pago de esa cuenta. Se verifica con Mercado Pago, se guarda cifrado y no se vuelve a mostrar. Revisá que sea la cuenta de <b>${esc(d.event.title)}</b>: la plata de sus ventas va a esa cuenta.</p>
+    <form onsubmit="submitAccount(event, '${eventId}')">
       <label>Nombre (para reconocerla)</label><input id="aName" required maxlength="60" placeholder="Cuenta de Juan">
       <label>Access Token de producción</label><input id="aToken" type="password" required autocomplete="off">
       <p><button ${d.keyConfigured ? '' : 'disabled'}>Agregar cuenta</button></p>
@@ -513,36 +648,35 @@ async function viewPayments() {
   </div>`;
 }
 
-async function submitAccount(ev) {
+async function submitAccount(ev, eventId) {
   ev.preventDefault();
   try {
-    await api('/payment-accounts', { method: 'POST', auth: true, body: { name: $('aName').value, accessToken: $('aToken').value } });
-    await viewPayments();
+    await api(`/organizer/events/${eventId}/payments/accounts`, { method: 'POST', auth: true, body: { name: $('aName').value, accessToken: $('aToken').value } });
+    await viewEventPayments(eventId);
     flash('Cuenta agregada. Todavía no cobra: activala cuando quieras usarla.');
   } catch (err) { flash(err.message, 'err'); }
 }
-async function setSalesPaused(paused) {
-  if (!paused || confirm('¿Pausar las ventas? Nadie va a poder iniciar compras hasta que las reanudes.')) {
-    try {
-      await api('/payment-accounts/sales-paused', { method: 'PUT', auth: true, body: { paused } });
-      await viewPayments();
-      flash(paused ? 'Ventas pausadas' : 'Ventas reanudadas');
-    } catch (err) { flash(err.message, 'err'); }
-  }
-}
-async function activateAccount(id, name) {
-  if (!confirm(`¿Cobrar con ${name} desde ahora? Las compras en curso se siguen confirmando con la cuenta anterior.`)) return;
+async function setEventSalesPaused(eventId, paused) {
+  if (paused && !confirm('¿Pausar las ventas de este evento? Nadie va a poder iniciar compras hasta que las reanudes.')) return;
   try {
-    await api(`/payment-accounts/${id}/activate`, { method: 'POST', auth: true });
-    await viewPayments();
-    flash(`Ahora se cobra con ${name}. Acordate de reanudar las ventas.`);
+    await api(`/organizer/events/${eventId}/sales-paused`, { method: 'PUT', auth: true, body: { paused } });
+    await viewEventPayments(eventId);
+    flash(paused ? 'Ventas del evento pausadas' : 'Ventas del evento reanudadas');
   } catch (err) { flash(err.message, 'err'); }
 }
-async function deleteAccount(id, name) {
+async function activateAccount(eventId, id, name) {
+  if (!confirm(`¿Cobrar este evento con ${name} desde ahora? Las compras en curso se siguen confirmando con la cuenta anterior.`)) return;
+  try {
+    await api(`/organizer/events/${eventId}/payments/accounts/${id}/activate`, { method: 'POST', auth: true });
+    await viewEventPayments(eventId);
+    flash(`Ahora este evento cobra con ${name}. Si lo pausaste para el cambio, reanudá las ventas.`);
+  } catch (err) { flash(err.message, 'err'); }
+}
+async function deleteAccount(eventId, id, name) {
   if (!confirm(`¿Borrar la cuenta ${name}?`)) return;
   try {
-    await api('/payment-accounts/' + id, { method: 'DELETE', auth: true });
-    await viewPayments();
+    await api(`/organizer/events/${eventId}/payments/accounts/${id}`, { method: 'DELETE', auth: true });
+    await viewEventPayments(eventId);
     flash('Cuenta borrada');
   } catch (err) { flash(err.message, 'err'); }
 }

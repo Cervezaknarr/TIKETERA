@@ -1,4 +1,4 @@
-// Cuentas de Mercado Pago del panel, pausa de ventas y validación del monto, con SQLite en memoria
+// Cuentas de Mercado Pago por evento, pausa de ventas y validación del monto, con SQLite en memoria
 process.env.DATABASE_URL = "sqlite::memory:";
 process.env.JWT_SECRET = "test-secret";
 process.env.NODE_ENV = "test";
@@ -54,13 +54,17 @@ const call = async (method, path, { token, body } = {}) => {
 };
 const admin = (method, path, body) => call(method, path, { token: adminToken, body });
 
-const addAccount = async (name, accessToken) =>
-  (await admin("POST", "/api/payment-accounts", { name, accessToken })).body.account;
+// Las cuentas son de cada evento; el admin las maneja por las mismas rutas del organizador
+const accountsPath = (eventId = event.id) => `/api/organizer/events/${eventId}/payments/accounts`;
+const addAccount = async (name, accessToken, eventId) =>
+  (await admin("POST", accountsPath(eventId), { name, accessToken })).body.account;
 const setPaused = (paused) => admin("PUT", "/api/payment-accounts/sales-paused", { paused });
-const activate = async (account) => {
-  await setPaused(true);
-  const res = await admin("POST", `/api/payment-accounts/${account.id}/activate`);
-  await setPaused(false);
+const setEventPaused = (paused, eventId = event.id) =>
+  admin("PUT", `/api/organizer/events/${eventId}/sales-paused`, { paused });
+const activate = async (account, eventId = event.id) => {
+  await setEventPaused(true, eventId);
+  const res = await admin("POST", `${accountsPath(eventId)}/${account.id}/activate`);
+  await setEventPaused(false, eventId);
   return res;
 };
 
@@ -141,7 +145,7 @@ test("los tokens se cifran y solo se leen con la clave", () => {
   }
 });
 
-test("las cuentas de pago y la pausa son solo para admin", async () => {
+test("el estado de los cobros y la pausa general son solo para admin", async () => {
   assert.equal((await call("GET", "/api/payment-accounts")).status, 401);
   assert.equal((await call("GET", "/api/payment-accounts", { token: staffToken })).status, 403);
   assert.equal((await call("PUT", "/api/payment-accounts/sales-paused", { token: staffToken, body: { paused: true } })).status, 403);
@@ -149,7 +153,7 @@ test("las cuentas de pago y la pausa son solo para admin", async () => {
 
 test("agregar una cuenta verifica el token, lo guarda cifrado y no lo devuelve", async () => {
   mpCalls = [];
-  const res = await admin("POST", "/api/payment-accounts", { name: "Cuenta A", accessToken: TOKEN_A });
+  const res = await admin("POST", accountsPath(), { name: "Cuenta A", accessToken: TOKEN_A });
   assert.equal(res.status, 201);
   assert.equal(res.body.account.tokenHint, TOKEN_A.slice(-4));
   assert.equal(res.body.account.active, false);
@@ -161,24 +165,27 @@ test("agregar una cuenta verifica el token, lo guarda cifrado y no lo devuelve",
   const stored = await PaymentAccount.findByPk(res.body.account.id);
   assert.ok(!stored.accessToken.includes(TOKEN_A));
   assert.equal(decrypt(stored.accessToken), TOKEN_A);
+  assert.equal(stored.eventId, event.id); // la cuenta es del evento, no general
 
-  const list = await admin("GET", "/api/payment-accounts");
+  const list = await admin("GET", `/api/organizer/events/${event.id}/payments`);
   assert.ok(!JSON.stringify(list.body).includes(TOKEN_A));
   assert.equal(list.body.keyConfigured, true);
+  const status = await admin("GET", "/api/payment-accounts");
+  assert.equal(status.body.accounts, undefined); // el panel general ya no lista cuentas
 });
 
 test("un token que Mercado Pago no acepta no se guarda", async () => {
   const before = await PaymentAccount.count();
   mpHandler = () => ({ status: 401, body: { message: "invalid_token" } });
   try {
-    const res = await admin("POST", "/api/payment-accounts", { name: "Mala", accessToken: "APP_USR-token-incorrecto-99" });
+    const res = await admin("POST", accountsPath(), { name: "Mala", accessToken: "APP_USR-token-incorrecto-99" });
     assert.equal(res.status, 400);
     assert.match(res.body.message, /no aceptó ese access token/);
   } finally {
     mpHandler = defaultHandler;
   }
   for (const body of [{ name: "", accessToken: TOKEN_A }, { name: "X", accessToken: "corto" }, { name: "X", accessToken: "con espacios en el token 1234" }]) {
-    assert.equal((await admin("POST", "/api/payment-accounts", body)).status, 400);
+    assert.equal((await admin("POST", accountsPath(), body)).status, 400);
   }
   assert.equal(await PaymentAccount.count(), before);
 });
@@ -187,7 +194,7 @@ test("sin PAYMENT_ACCOUNTS_KEY no se pueden guardar cuentas", async () => {
   const previous = process.env.PAYMENT_ACCOUNTS_KEY;
   delete process.env.PAYMENT_ACCOUNTS_KEY;
   try {
-    const res = await admin("POST", "/api/payment-accounts", { name: "Sin clave", accessToken: TOKEN_B });
+    const res = await admin("POST", accountsPath(), { name: "Sin clave", accessToken: TOKEN_B });
     assert.equal(res.status, 500);
     assert.match(res.body.message, /PAYMENT_ACCOUNTS_KEY/);
   } finally {
@@ -196,6 +203,8 @@ test("sin PAYMENT_ACCOUNTS_KEY no se pueden guardar cuentas", async () => {
 });
 
 test("con las ventas pausadas el checkout no acepta compras y se puede reanudar", async () => {
+  const first = await PaymentAccount.findOne({ where: { name: "Cuenta A" } });
+  assert.equal((await activate(first)).status, 200);
   assert.equal((await call("GET", "/api/purchases/status")).body.salesPaused, false);
 
   await setPaused(true);
@@ -212,24 +221,56 @@ test("con las ventas pausadas el checkout no acepta compras y se puede reanudar"
   assert.equal((await admin("PUT", "/api/payment-accounts/sales-paused", { paused: "si" })).status, 400);
 });
 
-test("cambiar de cuenta exige pausar las ventas y deja una sola activa", async () => {
-  const a = (await PaymentAccount.findOne({ where: { name: "Cuenta A" } })).toJSON();
+test("la primera cuenta se activa sin pausar; cambiar de cuenta exige pausar el evento", async () => {
+  const a = await PaymentAccount.findOne({ where: { name: "Cuenta A" } });
   const b = await addAccount("Cuenta B", TOKEN_B);
 
-  const unpaused = await admin("POST", `/api/payment-accounts/${a.id}/activate`);
+  const unpaused = await admin("POST", `${accountsPath()}/${b.id}/activate`);
   assert.equal(unpaused.status, 409);
   assert.match(unpaused.body.message, /Pausá las ventas/);
-  assert.equal(await PaymentAccount.count({ where: { active: true } }), 0);
+  assert.equal((await Event.findByPk(event.id)).paymentAccountId, a.id);
 
-  assert.equal((await activate(a)).status, 200);
   assert.equal((await activate(b)).status, 200);
-  const active = await PaymentAccount.findAll({ where: { active: true } });
-  assert.deepEqual(active.map((x) => x.name), ["Cuenta B"]);
+  assert.equal((await Event.findByPk(event.id)).paymentAccountId, b.id); // una sola activa
 
-  assert.equal((await admin("POST", "/api/payment-accounts/00000000-0000-4000-8000-000000000000/activate")).status, 409); // sin pausa
-  await setPaused(true);
-  assert.equal((await admin("POST", "/api/payment-accounts/00000000-0000-4000-8000-000000000000/activate")).status, 404);
-  await setPaused(false);
+  await setEventPaused(true);
+  assert.equal((await admin("POST", `${accountsPath()}/00000000-0000-4000-8000-000000000000/activate`)).status, 404);
+  await setEventPaused(false);
+});
+
+test("sin cuenta activa el evento no vende, y la cuenta de un evento no cobra otro", async () => {
+  const other = await Event.create({
+    title: "Otro evento",
+    description: "Prueba",
+    date: new Date(Date.now() + 86400000),
+    location: "Salón",
+    userId: event.userId,
+  });
+  const lot = await Lot.create({ eventId: other.id, name: "General", price: 500, quantity: 10, ticketsAvailable: 10 });
+  const buy = () => call("POST", "/api/purchases/checkout", {
+    body: { eventId: other.id, lotId: lot.id, buyerName: "C", buyerEmail: "c@test.com", quantity: 1 },
+  });
+
+  // Sin ninguna cuenta: no hay venta ni reserva de cupo, aunque el token del entorno exista
+  const blocked = await buy();
+  assert.equal(blocked.status, 503);
+  assert.match(blocked.body.message, /cobro/);
+  assert.equal((await Lot.findByPk(lot.id)).ticketsAvailable, 10);
+
+  // La cuenta de otro evento no se puede activar acá
+  const mine = await PaymentAccount.findOne({ where: { eventId: event.id } });
+  assert.equal((await admin("POST", `${accountsPath(other.id)}/${mine.id}/activate`)).status, 404);
+  assert.equal((await buy()).status, 503);
+
+  // Con su propia cuenta activa sí vende, y cobra con ella
+  const own = await addAccount("Cuenta del otro", "APP_USR-cuenta-otra-5555555555", other.id);
+  assert.equal((await activate(own, other.id)).status, 200);
+  mpCalls = [];
+  const sold = await buy();
+  assert.equal(sold.status, 201);
+  assert.equal(mpCalls[0].options.headers.Authorization, "Bearer APP_USR-cuenta-otra-5555555555");
+  const purchase = await Purchase.findOne({ where: { paymentGatewayId: sold.body.purchase.id } });
+  assert.equal(purchase.paymentAccountId, own.id);
 });
 
 test("un pago de la cuenta anterior se confirma con el token de esa cuenta", async () => {
@@ -320,11 +361,11 @@ test("no se borra la cuenta activa ni una que ya cobró compras", async () => {
   const a = await PaymentAccount.findOne({ where: { name: "Cuenta A" } });
   const b = await PaymentAccount.findOne({ where: { name: "Cuenta B" } });
 
-  assert.equal((await admin("DELETE", `/api/payment-accounts/${b.id}`)).status, 409); // activa
-  assert.equal((await admin("DELETE", `/api/payment-accounts/${a.id}`)).status, 409); // con compras
+  assert.equal((await admin("DELETE", `${accountsPath()}/${b.id}`)).status, 409); // activa
+  assert.equal((await admin("DELETE", `${accountsPath()}/${a.id}`)).status, 409); // con compras
 
   const spare = await addAccount("Cuenta C", "APP_USR-cuenta-c-3333333333");
-  assert.equal((await admin("DELETE", `/api/payment-accounts/${spare.id}`)).status, 200);
+  assert.equal((await admin("DELETE", `${accountsPath()}/${spare.id}`)).status, 200);
   assert.equal(await PaymentAccount.count({ where: { name: "Cuenta C" } }), 0);
-  assert.equal((await admin("DELETE", `/api/payment-accounts/${spare.id}`)).status, 404);
+  assert.equal((await admin("DELETE", `${accountsPath()}/${spare.id}`)).status, 404);
 });

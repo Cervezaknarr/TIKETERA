@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Kaiser Tikets · Organizador</title>
+<title>GT Tickets · Organizador</title>
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <header>
-  <h1>🎟️ Kaiser Tikets <span class="muted">· Organizador</span></h1>
+  <h1><svg viewBox="0 0 28 28" width="26" height="26" role="img" aria-label="GT" style="vertical-align:-6px;margin-right:8px"><rect width="28" height="28" rx="8" fill="currentColor"/><text x="14" y="19.2" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="13.5" font-weight="800" letter-spacing="-.5" fill="var(--bg)">GT</text></svg>GT Tickets <span class="muted">· Organizador</span></h1>
   <nav id="nav"></nav>
 </header>
 <main>
@@ -49,7 +49,7 @@ function go(view, arg) {
   flash('');
   renderNav();
   if (!session.token) {
-    return renderLogin('Ingreso de organizadores', ['organizer'], (token, user) => {
+    return renderLogin('Ingreso de organizadores', ['organizer', 'admin'], (token, user) => {
       auth.set(token, user); shareWithScanner(token, user); go('events');
     });
   }
@@ -255,7 +255,7 @@ async function viewPayments(eventId) {
   const active = d.accounts.find(a => a.active);
   const charging = d.provider !== 'mercadopago' ? `la pasarela <b>${esc(d.provider)}</b>`
     : active ? `<b>${esc(active.name)}</b> (…${esc(active.tokenHint)})`
-    : 'la <b>cuenta general de la plataforma</b> (todavía no activaste una cuenta propia)';
+    : '<b>ninguna cuenta</b>: hasta que actives una, este evento no puede vender';
 
   $('view').innerHTML = `
   <h2>Pagos · ${esc(d.event.title)}</h2>
@@ -264,7 +264,7 @@ async function viewPayments(eventId) {
     <p class="muted">Este evento cobra con ${charging}.<br>
       Compras sin terminar de pagar: <b>${d.pendingPurchases}</b>. Las que ya están en curso se siguen confirmando con la cuenta con la que se crearon.</p>
     <p><button class="${d.salesPaused ? '' : 'danger'}" onclick="setSalesPaused('${eventId}', ${!d.salesPaused})">${d.salesPaused ? 'Reanudar ventas' : 'Pausar ventas'}</button></p>
-    <p class="muted">Para cambiar de cuenta: pausá las ventas, activá la otra cuenta y reanudá. Mientras estén pausadas nadie puede iniciar una compra nueva de este evento.</p>
+    <p class="muted">Para cobrar con otra cuenta: pausá las ventas, activá la otra cuenta y reanudá (la primera se activa sin pausar). Mientras estén pausadas nadie puede iniciar una compra nueva de este evento.</p>
   </div>
 
   <div class="card table-wrap" style="margin-bottom:14px">
@@ -278,11 +278,11 @@ async function viewPayments(eventId) {
           <td class="muted">…${esc(a.tokenHint)}</td>
           <td>${a.active ? '<span class="tag completed">Activa</span>' : '<span class="tag">Inactiva</span>'}</td>
           <td style="white-space:nowrap">
-            ${a.active ? '' : `<button class="ghost" ${d.salesPaused ? '' : 'disabled title="Pausá las ventas para cambiar de cuenta"'} onclick="activateAccount('${eventId}', '${a.id}', this.dataset.name)" data-name="${esc(a.name)}">Activar</button>
+            ${a.active ? '' : `<button class="ghost" ${d.salesPaused || !active ? '' : 'disabled title="Pausá las ventas para cambiar de cuenta"'} onclick="activateAccount('${eventId}', '${a.id}', this.dataset.name)" data-name="${esc(a.name)}">Activar</button>
             <button class="ghost danger" onclick="deleteAccount('${eventId}', '${a.id}', this.dataset.name)" data-name="${esc(a.name)}">Borrar</button>`}
           </td>
         </tr>`).join('')}
-      </tbody></table>` : '<p class="muted">Todavía no cargaste ninguna cuenta.</p>'}
+      </tbody></table>` : '<p class="muted">Todavía no cargaste ninguna cuenta. Cargá una y activala para poder vender.</p>'}
   </div>
 
   <div class="card">

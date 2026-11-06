@@ -95,6 +95,9 @@ const createEvent = async (req, res) => {
     }
     const age = parseAgeFields(req.body);
     if (age.error) return res.status(400).json({ success: false, message: age.error });
+    if (req.body.unlisted !== undefined && typeof req.body.unlisted !== "boolean") {
+      return res.status(400).json({ success: false, message: "El campo «no listado» tiene que ser verdadero o falso" });
+    }
     const organizer = await parseOrganizer(req.body.organizerId);
     if (organizer.error) return res.status(400).json({ success: false, message: organizer.error });
 
@@ -136,6 +139,7 @@ const createEvent = async (req, res) => {
           minAge: age.minAge ?? null,
           organizerId: organizer.organizerId ?? null,
           status,
+          unlisted: req.body.unlisted === true,
           userId: req.user.id, // El userId viene del middleware de autenticación
         },
         { transaction }
@@ -234,6 +238,7 @@ const getEvents = async (req, res) => {
     // El público solo ve los publicados; el administrador puede filtrar por cualquier estado
     if (!req.isAdmin) {
       where.status = "published";
+      where.unlisted = false; // los no listados solo se abren con su link
     } else if (req.query.status) {
       where.status = req.query.status;
     }
@@ -313,6 +318,9 @@ const updateEvent = async (req, res) => {
     }
     const age = parseAgeFields(req.body);
     if (age.error) return res.status(400).json({ success: false, message: age.error });
+    if (req.body.unlisted !== undefined && typeof req.body.unlisted !== "boolean") {
+      return res.status(400).json({ success: false, message: "El campo «no listado» tiene que ser verdadero o falso" });
+    }
     const organizer = await parseOrganizer(req.body.organizerId);
     if (organizer.error) return res.status(400).json({ success: false, message: organizer.error });
 
@@ -323,6 +331,7 @@ const updateEvent = async (req, res) => {
     if (location !== undefined) event.location = location.trim();
     if (imageUrl !== undefined) event.imageUrl = imageUrl || null;
     if (status !== undefined) event.status = status;
+    if (req.body.unlisted !== undefined) event.unlisted = req.body.unlisted;
     if (organizer.organizerId !== undefined) event.organizerId = organizer.organizerId;
     if (age.minAge !== undefined) {
       event.minAge = age.minAge;
@@ -333,7 +342,7 @@ const updateEvent = async (req, res) => {
     const changed = event.changed() || [];
     const details = {};
     for (const key of changed) {
-      if (["status", "organizerId", "minAge"].includes(key)) {
+      if (["status", "organizerId", "minAge", "unlisted"].includes(key)) {
         details[key] = { from: event.previous(key) ?? null, to: event.get(key) ?? null };
       } else if (key !== "adultsOnly" && key !== "slug") {
         details[key] = true;

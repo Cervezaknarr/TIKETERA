@@ -373,12 +373,25 @@ test("Mercado Pago avisa si falta el access token", async () => {
   const mp = require("../utils/payments/mercadopago");
   await assert.rejects(
     mp.createPayment({ purchase: {}, event: {} }),
-    /no hay una cuenta activa ni MERCADOPAGO_ACCESS_TOKEN configurado/
+    /el evento no tiene una cuenta de cobro activa/
   );
 });
 
 test("Mercado Pago crea la preferencia con la compra como referencia", async () => {
   const mp = require("../utils/payments/mercadopago");
+  const PaymentAccount = require("../models/PaymentAccount");
+  const { encrypt } = require("../utils/secrets");
+
+  // El evento cobra con su cuenta: el token sale de la cuenta guardada, no del entorno
+  const previousKey = process.env.PAYMENT_ACCOUNTS_KEY;
+  process.env.PAYMENT_ACCOUNTS_KEY = "clave-de-prueba-para-cifrar";
+  const eventRow = await newEvent(10);
+  const account = await PaymentAccount.create({
+    name: "Cuenta del evento",
+    accessToken: encrypt("ACCOUNT-token-del-evento"),
+    tokenHint: "vento",
+    eventId: eventRow.id,
+  });
 
   await withMercadoPago(
     () => ({ body: { id: "pref-1", init_point: "https://mp.test/checkout?pref=pref-1" } }),
@@ -392,26 +405,28 @@ test("Mercado Pago crea la preferencia con la compra como referencia", async () 
           buyerEmail: "ana@test.com",
           accessToken: "abc",
         },
-        event: { title: "Recital" },
+        event: { title: "Recital", paymentAccountId: account.id },
       });
 
       assert.deepEqual(result, {
         gatewayId: "11111111-1111-4111-8111-111111111111",
         checkoutUrl: "https://mp.test/checkout?pref=pref-1",
-        accountId: null, // sin cuentas en el panel se cobra con el token del entorno
+        accountId: account.id,
       });
 
       const { url, options } = calls[0];
       assert.equal(url, "https://api.mercadopago.com/checkout/preferences");
-      assert.equal(options.headers.Authorization, "Bearer TEST-token");
+      assert.equal(options.headers.Authorization, "Bearer ACCOUNT-token-del-evento");
       const body = JSON.parse(options.body);
       assert.equal(body.external_reference, "11111111-1111-4111-8111-111111111111");
       assert.equal(body.items[0].unit_price, 1250);
       assert.equal(body.items[0].quantity, 2);
-      assert.equal(body.notification_url, "https://api.ticketera.test/api/purchases/webhook");
+      assert.equal(body.notification_url, `https://api.ticketera.test/api/purchases/webhook?acc=${account.id}`);
       assert.match(body.back_urls.success, /#\/entradas\/abc$/);
     }
   );
+  if (previousKey === undefined) delete process.env.PAYMENT_ACCOUNTS_KEY;
+  else process.env.PAYMENT_ACCOUNTS_KEY = previousKey;
 });
 
 test("el webhook de Mercado Pago consulta el pago y mapea su estado", async () => {
