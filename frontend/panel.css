@@ -1,0 +1,45 @@
+/* Cabecera de los paneles del personal (/adminGt, /organizadorGt, /staffGt).
+   Toma la línea del sitio público (event.css): barra con vidrio esmerilado, logo GT y
+   botones del menú en píldora. Solo toca el header: el contenido de cada panel sigue con styles.css */
+
+body.panel header {
+  --hdr-blue:#0071e3;
+  --hdr-hover:12%;
+  position:sticky; top:0; z-index:10; padding:10px 16px;
+  background:color-mix(in srgb, var(--card) 78%, transparent);
+  -webkit-backdrop-filter:saturate(180%) blur(20px); backdrop-filter:saturate(180%) blur(20px);
+  border-bottom:1px solid var(--border);
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+@media (prefers-color-scheme: dark) {
+  body.panel header { --hdr-blue:#2997ff; }
+}
+
+/* Marca: cuadrado GT + nombre, y el rol como etiqueta chica al lado */
+body.panel header h1 { display:flex; align-items:center; gap:9px; font-size:17px; font-weight:600; letter-spacing:-.01em; color:var(--text); }
+body.panel header h1 .logo { flex:none; width:26px; height:26px; }
+body.panel header h1 .role { margin-left:2px; padding:2px 9px; border-radius:980px; border:1px solid var(--border);
+  font-size:12px; font-weight:500; letter-spacing:0; color:var(--muted); }
+
+/* Menú: píldoras con fondo tintado, sin borde. El nombre de quien entró queda como texto suelto */
+body.panel header nav { gap:6px; }
+body.panel header nav .muted { margin-right:6px; font-size:14px; }
+body.panel header nav button,
+body.panel header nav .ghost-link {
+  display:inline-flex; align-items:center; padding:7px 15px; border-radius:980px; border:0;
+  background:color-mix(in srgb, var(--hdr-blue) 12%, transparent); color:var(--hdr-blue);
+  font-size:14px; font-weight:500; line-height:1.3; text-decoration:none;
+  transition:background .15s, transform .1s;
+}
+body.panel header nav button:hover,
+body.panel header nav .ghost-link:hover { background:color-mix(in srgb, var(--hdr-blue) 20%, transparent); }
+body.panel header nav button:active,
+body.panel header nav .ghost-link:active { transform:scale(.97); }
+body.panel header nav button:focus-visible,
+body.panel header nav .ghost-link:focus-visible { outline:2px solid var(--hdr-blue); outline-offset:2px; }
+
+@media (max-width:560px) {
+  body.panel header { padding:10px 12px; }
+  body.panel header nav { width:100%; }
+}
