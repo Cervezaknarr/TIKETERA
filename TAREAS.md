@@ -544,3 +544,17 @@ Detalle en `PLAN.md` §9. Estado: todas pendientes.
 | M-11 | Decidir ramas a borrar | Tras T3.12 |
 | M-12 | Aprobar despliegues, tareas `[SEGURIDAD]` y políticas | Cada ola |
 | M-13 | Secretos de webhook de MP y verificación de `collector_id` | Tras D2 |
+
+---
+
+## Verificación QA — 2026-11-06 (commits 6107ff5, d2adf3c, eeb96ad en `main`)
+
+Alcance: cuentas de Mercado Pago por evento, evento «no listado», cortesías, `Event.mapQuery`, paneles/pie (frontend). No hay tareas T-xx para esto: se verificó contra lo descrito en `MEMORIA.md` y los mensajes de commit.
+
+- **Suite completa** (`PURCHASE_HOLD_MINUTES= npm test`): 244 pasan, 0 fallan (132 s). `MEMORIA.md` dice 247: discrepancia menor de documentación.
+- **Tests nuevos:** `backend/test/courtesiesEdge.test.js` (6 tests, pasan): cantidad por defecto/límites 1 y 20 con códigos únicos, tipos raros -> 400, cortesía inaccesible desde otro evento o con id inválido, compra real no manipulable por rutas de cortesías, anular dos veces -> 409 y enviar anulada -> 400, límites de `mapQuery` (200/201, no string, espacios).
+- **Resultado:** `hecha` (backend verificado). Sin fallos que reportar.
+- **Pendiente / observaciones:**
+  - `[SEGURIDAD]` Cuentas de cobro por evento y cortesías (permisos solo-admin, tokens de Mercado Pago): el usuario debe aprobar antes de pasar a `cerrada`. `MEMORIA.md` ya advierte que nada detecta un token pegado en el evento equivocado.
+  - Documentación (documentador): la nota de despliegue de `MEMORIA.md` habla de dos columnas nuevas (`Event.unlisted`, `Purchase.courtesy`) pero eeb96ad agrega una tercera, `Event.mapQuery`; hay que citarla para el paso con `DB_SYNC_ALTER`. `LEVANTAR-TIKETERA.md` dice 37 tests y son 244.
+  - Frontend (paneles, mapa embebido, pie, `terminos.html`) sin tests automáticos: no hay framework de UI. Solo se revisó por lectura que `mapSrc` usa `encodeURIComponent` y que `esc()` se aplica al valor en el formulario. Falta prueba manual en navegador.
