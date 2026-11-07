@@ -75,7 +75,6 @@ async function viewEvents() {
           <div class="ev-admin-body">
           <h3>${esc(e.title)} <span class="tag ${e.status === 'published' ? 'completed' : 'failed'}">${eventStatus[e.status]}</span>${e.unlisted ? ' <span class="tag">No listado</span>' : ''}${ageOf(e) ? ` <span class="tag">+${ageOf(e)}</span>` : ''}</h3>
           <div class="ev-meta"><div class="ev-date">📅 ${new Date(e.date).toLocaleString('es-AR')}</div><div class="ev-place">📍 ${esc(e.location)}</div></div>
-          <div class="ev-link"><a href="/e/${esc(e.slug)}" target="_blank">🔗 ${location.origin}/e/${esc(e.slug)}</a></div>
           <div class="lots">${e.lots.map(l => `
             <div class="lot ${l.ticketsAvailable < 1 ? 'sold' : ''}">
               <b>${esc(l.name)}</b>
@@ -87,6 +86,7 @@ async function viewEvents() {
              <button class="ghost" onclick="go('courtesies','${e.id}')">Cortesías</button>
              <button class="ghost" onclick="go('edit','${e.id}')">Editar</button></p>
           </div>
+        <div class="ev-link"><a href="/e/${esc(e.slug)}" target="_blank">🔗 ${location.origin}/e/${esc(e.slug)}</a></div>
         </div>`).join('')}</div>`
       : `<p class="muted">Todavía no hay eventos.</p><p><button onclick="go('edit')">Crear el primero</button></p>`);
   } catch (err) { $('view').innerHTML = ''; flash(err.message, 'err'); }

@@ -51,7 +51,7 @@ body.panel header nav button:focus-visible,
 body.panel header nav .ghost-link:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 
 /* Listado de eventos del admin: foto cuadrada chica a la izquierda de cada tarjeta */
-body.panel .ev-admin { display:flex; gap:14px; align-items:flex-start; }
+body.panel .ev-admin { display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start; min-width:0; }
 body.panel .ev-admin-body { flex:1; min-width:0; }
 body.panel .ev-admin-body .muted { overflow-wrap:anywhere; word-break:break-word; }
 body.panel .ev-admin-body .muted a { overflow-wrap:anywhere; word-break:break-all; }
@@ -60,8 +60,8 @@ body.panel .ev-admin-body h3 { margin:0 0 8px; font-size:19px; font-weight:700; 
 body.panel .ev-meta { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; overflow-wrap:anywhere; }
 body.panel .ev-date { font-size:15px; font-weight:700; color:var(--accent); }
 body.panel .ev-place { font-size:15px; font-weight:600; color:var(--text); }
-body.panel .ev-link { display:flex; justify-content:center; margin:0 0 12px; }
-body.panel .ev-link a { display:inline-block; max-width:100%; box-sizing:border-box; padding:7px 14px; border:1px solid var(--accent); border-radius:999px; text-align:center; font-size:13px; font-weight:600; color:var(--accent); text-decoration:none; overflow-wrap:anywhere; word-break:break-all; }
+body.panel .ev-link { flex:0 0 100%; min-width:0; display:flex; justify-content:center; margin:0; }
+body.panel .ev-link a { display:inline-block; max-width:100%; box-sizing:border-box; padding:7px 14px; border:1px solid var(--accent); border-radius:12px; text-align:center; font-size:13px; font-weight:600; color:var(--accent); text-decoration:none; overflow-wrap:anywhere; word-break:break-all; }
 body.panel .ev-link a:hover { text-decoration:underline; text-underline-offset:2px; }
 body.panel .ev-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 0; }
 body.panel .ev-thumb { flex:none; width:84px; height:84px; border-radius:14px; object-fit:cover; background:var(--bg); border:1px solid var(--border); }
