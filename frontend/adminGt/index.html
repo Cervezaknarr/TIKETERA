@@ -74,7 +74,8 @@ async function viewEvents() {
           ${evThumb(e)}
           <div class="ev-admin-body">
           <h3>${esc(e.title)} <span class="tag ${e.status === 'published' ? 'completed' : 'failed'}">${eventStatus[e.status]}</span>${e.unlisted ? ' <span class="tag">No listado</span>' : ''}${ageOf(e) ? ` <span class="tag">+${ageOf(e)}</span>` : ''}</h3>
-          <div class="muted">📅 ${new Date(e.date).toLocaleString('es-AR')}<br>📍 ${esc(e.location)}<br>🔗 <a href="/e/${esc(e.slug)}" target="_blank">${location.origin}/e/${esc(e.slug)}</a></div>
+          <div class="ev-meta"><div class="ev-date">📅 ${new Date(e.date).toLocaleString('es-AR')}</div><div class="ev-place">📍 ${esc(e.location)}</div></div>
+          <div class="ev-link"><a href="/e/${esc(e.slug)}" target="_blank">🔗 ${location.origin}/e/${esc(e.slug)}</a></div>
           <div class="lots">${e.lots.map(l => `
             <div class="lot ${l.ticketsAvailable < 1 ? 'sold' : ''}">
               <b>${esc(l.name)}</b>
@@ -82,7 +83,7 @@ async function viewEvents() {
                 ${l.ticketsAvailable < 1 ? '<span class="tag soldout">Agotada</span>' : ''}</span>
             </div>`).join('')}</div>
           <div class="muted">${e.ticketsAvailable} disponibles${stats[i] ? ` · ${stats[i].total} vendidas · ${stats[i].admitted} ingresaron` : ''}</div>
-          <p><button onclick="go('buyers','${e.id}')">Compradores</button>
+          <p class="ev-actions"><button onclick="go('buyers','${e.id}')">Compradores</button>
              <button class="ghost" onclick="go('courtesies','${e.id}')">Cortesías</button>
              <button class="ghost" onclick="go('edit','${e.id}')">Editar</button></p>
           </div>
