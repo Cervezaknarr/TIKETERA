@@ -53,6 +53,8 @@ body.panel header nav .ghost-link:focus-visible { outline:2px solid var(--accent
 /* Listado de eventos del admin: foto cuadrada chica a la izquierda de cada tarjeta */
 body.panel .ev-admin { display:flex; gap:14px; align-items:flex-start; }
 body.panel .ev-admin-body { flex:1; min-width:0; }
+body.panel .ev-admin-body .muted { overflow-wrap:anywhere; word-break:break-word; }
+body.panel .ev-admin-body .muted a { overflow-wrap:anywhere; word-break:break-all; }
 body.panel .ev-thumb { flex:none; width:84px; height:84px; border-radius:14px; object-fit:cover; background:var(--bg); border:1px solid var(--border); }
 body.panel .ev-thumb-date { display:flex; flex-direction:column; align-items:center; justify-content:center; line-height:1; color:var(--text); }
 body.panel .ev-thumb-date b { font-size:28px; font-weight:700; letter-spacing:-.02em; }
