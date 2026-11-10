@@ -3,7 +3,7 @@ const { sequelize } = require("../config/database");
 const Event = require("./Event");
 
 // Un lote es un tipo de entrada del evento (EARLY, VIP, General, Jugador...) con
-// su propio precio y cupo. Una compra es siempre de un solo lote
+// su propio precio y cupo. Una compra puede llevar varios lotes (carrito)
 const Lot = sequelize.define("Lot", {
   id: {
     type: DataTypes.UUID,
@@ -45,6 +45,13 @@ const Lot = sequelize.define("Lot", {
     type: DataTypes.INTEGER,
     allowNull: false,
     defaultValue: 0,
+  },
+  // Tandas: false = se vende a la vez que los demás (normal); true = se activa recién cuando se
+  // agota el lote anterior (por position). Ver utils/tiers.js
+  afterPrevious: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
   },
 });
 

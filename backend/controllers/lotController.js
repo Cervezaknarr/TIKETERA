@@ -4,7 +4,7 @@ const Lot = require("../models/Lot");
 const Purchase = require("../models/Purchase");
 const Pack = require("../models/Pack");
 const { sequelize } = require("../config/database");
-const { parseLotInput } = require("../utils/lots");
+const { parseLotInput, withLots } = require("../utils/lots");
 const { audit } = require("../utils/audit");
 
 /**
@@ -69,7 +69,7 @@ const addLot = async (req, res) => {
       entityType: "Lot",
       entityId: lot.id,
       eventId: event.id,
-      details: { price: Number(lot.price), quantity: lot.quantity },
+      details: { price: Number(lot.price), quantity: lot.quantity, ...(lot.afterPrevious ? { afterPrevious: true } : {}) },
     });
     res.status(201).json({ success: true, lot });
   } catch (error) {
@@ -97,12 +97,18 @@ const updateLot = async (req, res) => {
       return res.status(400).json({ success: false, message: "Ya existe un lote con ese nombre" });
     }
 
-    const before = { name: lot.name, price: Number(lot.price), quantity: lot.quantity };
+    const before = {
+      name: lot.name,
+      price: Number(lot.price),
+      quantity: lot.quantity,
+      afterPrevious: lot.afterPrevious,
+    };
     await sequelize.transaction(async (transaction) => {
       // Nombre y precio solo cambian para las compras futuras
       const plain = {};
       if (data.name) plain.name = data.name;
       if (data.price !== undefined) plain.price = data.price;
+      if (data.afterPrevious !== undefined) plain.afterPrevious = data.afterPrevious;
       if (Object.keys(plain).length) await lot.update(plain, { transaction });
 
       if (req.body.soldOut === true) {
@@ -145,6 +151,9 @@ const updateLot = async (req, res) => {
     if (updated.name !== before.name) details.name = { from: before.name, to: updated.name };
     if (Number(updated.price) !== before.price) details.price = { from: before.price, to: Number(updated.price) };
     if (updated.quantity !== before.quantity) details.quantity = { from: before.quantity, to: updated.quantity };
+    if (updated.afterPrevious !== before.afterPrevious) {
+      details.afterPrevious = { from: before.afterPrevious, to: updated.afterPrevious };
+    }
     if (req.body.soldOut === true) details.soldOut = true;
     await audit(req, { action: "LOT_UPDATE", entityType: "Lot", entityId: lot.id, eventId: event.id, details });
     res.json({ success: true, lot: updated });
@@ -191,7 +200,7 @@ const deleteLot = async (req, res) => {
       entityType: "Lot",
       entityId: lot.id,
       eventId: event.id,
-      details: { price: Number(lot.price), quantity: lot.quantity },
+      details: { price: Number(lot.price), quantity: lot.quantity, afterPrevious: lot.afterPrevious },
     });
     res.json({ success: true, message: "Lote eliminado" });
   } catch (error) {
@@ -199,4 +208,56 @@ const deleteLot = async (req, res) => {
   }
 };
 
-module.exports = { addLot, updateLot, deleteLot, findManagedEvent };
+/**
+ * @desc    Reordenar los lotes del evento (el orden de la lista es también el orden de
+ *          venta de las tandas). Body: { order: [lotId, ...] } con TODOS los lotes, una vez
+ * @route   PUT /api/events/:eventId/lots-order
+ * @access  Private (administrador)
+ */
+const reorderLots = async (req, res) => {
+  try {
+    const event = await findManagedEvent(req, res);
+    if (!event) return;
+
+    const order = req.body && req.body.order;
+    if (!Array.isArray(order) || order.some((id) => typeof id !== "string")) {
+      return res.status(400).json({ success: false, message: "order tiene que ser una lista de ids de lote" });
+    }
+    if (new Set(order).size !== order.length) {
+      return res.status(400).json({ success: false, message: "La lista tiene lotes repetidos" });
+    }
+
+    const result = await sequelize.transaction(async (transaction) => {
+      // Bloquea TODOS los lotes del evento en orden de id (igual que el checkout): los UPDATE
+      // siguientes pueden ir en cualquier orden sin deadlock con una compra ni con otro reorden
+      const lots = await Lot.findAll({
+        where: { eventId: event.id },
+        order: [["id", "ASC"]],
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+      });
+      const ids = new Set(lots.map((l) => l.id));
+      if (order.length !== lots.length || order.some((id) => !ids.has(id))) {
+        return { error: "La lista tiene que incluir todos los lotes del evento, una sola vez cada uno" };
+      }
+      for (let i = 0; i < order.length; i++) {
+        await Lot.update({ position: i }, { where: { id: order[i], eventId: event.id }, transaction });
+      }
+      return {};
+    });
+    if (result.error) return res.status(400).json({ success: false, message: result.error });
+
+    await audit(req, {
+      action: "LOT_REORDER",
+      entityType: "Event",
+      entityId: event.id,
+      eventId: event.id,
+      details: { lots: order.length },
+    });
+    res.json({ success: true, event: await withLots(event, { admin: true }) });
+  } catch (error) {
+    serverError(res, error, "Error al reordenar los lotes");
+  }
+};
+
+module.exports = { addLot, updateLot, deleteLot, reorderLots, findManagedEvent };

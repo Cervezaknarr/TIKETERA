@@ -1,5 +1,6 @@
 const Lot = require("../models/Lot");
 const { packsByEvent } = require("./packs");
+const { lockedLotIds } = require("./tiers");
 
 /**
  * Validar los datos de un lote que manda el organizador.
@@ -37,6 +38,14 @@ const parseLotInput = (input, { partial = false } = {}) => {
     data.quantity = input.quantity;
   }
 
+  // Tanda: true = se activa al agotarse el lote anterior; ausente = no se toca (alta: false)
+  if (input.afterPrevious !== undefined) {
+    if (typeof input.afterPrevious !== "boolean") {
+      return { error: "afterPrevious tiene que ser verdadero o falso" };
+    }
+    data.afterPrevious = input.afterPrevious;
+  }
+
   return { data };
 };
 
@@ -51,9 +60,11 @@ const withLots = async (events, { admin = false } = {}) => {
     order: [
       ["position", "ASC"],
       ["createdAt", "ASC"],
+      ["id", "ASC"],
     ],
   });
 
+  const locked = lockedLotIds(lots);
   const packs = await packsByEvent(list.map((e) => e.id));
 
   const result = list.map((event) => {
@@ -69,7 +80,15 @@ const withLots = async (events, { admin = false } = {}) => {
       delete json.userId;
       delete json.User;
     }
-    json.lots = lots.filter((lot) => lot.eventId === event.id);
+    // `locked`: tanda todavía no a la venta (se calcula en vivo); afterPrevious solo lo ve el admin
+    json.lots = lots
+      .filter((lot) => lot.eventId === event.id)
+      .map((lot) => {
+        const plain = lot.toJSON();
+        plain.locked = locked.has(lot.id);
+        if (!admin) delete plain.afterPrevious;
+        return plain;
+      });
     json.packs = packs.get(event.id) || [];
     json.ticketsAvailable = json.lots.reduce((sum, lot) => sum + lot.ticketsAvailable, 0);
     return json;

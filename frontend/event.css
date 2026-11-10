@@ -104,6 +104,9 @@ body:has(.site-foot) main { flex:1; width:100%; }
   font-size:20px; line-height:1; display:flex; align-items:center; justify-content:center; }
 .ev-stepper .ev-step:disabled { opacity:.35; }
 .ev-stepper .ev-qty { min-width:28px; text-align:center; font-weight:600; font-variant-numeric:tabular-nums; }
+.ev-lot.locked { opacity:.6; cursor:default; background:color-mix(in srgb,var(--muted) 10%,var(--card)); border-style:dashed; filter:grayscale(1); }
+.ev-soon { align-self:flex-start; margin-top:4px; font-size:var(--fs-xs); font-weight:700; padding:2px 8px; border-radius:999px;
+  border:1px solid var(--muted); color:var(--text); }
 .ev-soldtag { font-size:var(--fs-xs); color:var(--err); font-weight:600; }
 
 /* Barra de pago: pegada abajo en el celular */

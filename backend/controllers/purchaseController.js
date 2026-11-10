@@ -7,6 +7,7 @@ const Ticket = require("../models/Ticket");
 const PurchaseItem = require("../models/PurchaseItem");
 const { sequelize } = require("../config/database");
 const { packUnitPrice } = require("../utils/packs");
+const { lockedLotIds } = require("../utils/tiers");
 const { itemsOf, pendingByLot, releaseStock, reserveItems } = require("../utils/purchases");
 const QRCode = require("qrcode");
 const { generateTicketCode } = require("../utils/ticketCode");
@@ -347,15 +348,36 @@ const createCheckoutSession = async (req, res) => {
     }
     // Siempre en el mismo orden: dos carritos simultáneos no se bloquean entre sí
     const lotsToLock = [...quantityByLot.keys()].sort();
+    // Tandas: si el evento tiene alguna, se bloquean TODOS sus lotes (un solo conjunto ordenado
+    // por id, anti-deadlock) y las cadenas se calculan con datos frescos dentro de la transacción.
+    // Esta consulta liviana previa solo decide qué conjunto bloquear; se re-verifica adentro
+    const tierWhere = { eventId, afterPrevious: true };
+    const eventHasTiers = (await Lot.count({ where: tierWhere })) > 0;
 
     // Reservar el cupo y crear la compra en una sola transacción. El precio se
     // fija ahora: editar el lote después no cambia lo que se está pagando
     const reservation = await sequelize.transaction(async (transaction) => {
       // Bloquear los lotes: los topes se cuentan con las compras pendientes y dos
       // pedidos simultáneos no pueden pasar los dos
-      const locked = new Map();
-      for (const lotId of lotsToLock) {
-        locked.set(lotId, await Lot.findByPk(lotId, { transaction, lock: transaction.LOCK.UPDATE }));
+      const lockLots = (where) =>
+        Lot.findAll({ where, order: [["id", "ASC"]], lock: transaction.LOCK.UPDATE, transaction });
+      let rows = await lockLots(eventHasTiers ? { eventId } : { id: lotsToLock });
+      if (!eventHasTiers && (await Lot.count({ where: tierWhere, transaction })) > 0) {
+        // Apareció una tanda entre la consulta previa y el bloqueo: bloquear todo el evento
+        rows = await lockLots({ eventId });
+      }
+      const locked = new Map(rows.map((l) => [l.id, l]));
+      // Un lote pedido pudo borrarse mientras tanto
+      if (lotsToLock.some((id) => !locked.has(id) || locked.get(id).eventId !== eventId)) {
+        return { gone: true };
+      }
+
+      // Tandas: solo se vende la tanda activa de cada cadena, según el estado previo a esta
+      // compra (sin desborde a la siguiente). Antes de topes y de reservar nada
+      if (rows.some((l) => l.afterPrevious === true)) {
+        const lockedTiers = lockedLotIds(rows);
+        const blocked = lotsToLock.find((id) => lockedTiers.has(id));
+        if (blocked) return { tierLocked: locked.get(blocked) };
       }
 
       const pendingForEmail = await Purchase.count({
@@ -430,6 +452,19 @@ const createCheckoutSession = async (req, res) => {
       return { purchase, items };
     });
 
+    if (reservation.gone) {
+      return res.status(404).json({
+        success: false,
+        message: "Una de las entradas ya no está disponible. Actualizá la página y elegí de nuevo",
+      });
+    }
+    if (reservation.tierLocked) {
+      return res.status(409).json({
+        success: false,
+        code: "LOT_LOCKED",
+        message: `La tanda «${reservation.tierLocked.name}» todavía no está a la venta. Actualizá la página y elegí de nuevo`,
+      });
+    }
     if (reservation.limit === "email") {
       return res.status(429).json({
         success: false,
@@ -601,6 +636,7 @@ const handlePaymentWebhook = async (req, res) => {
         }
 
         const items = await itemsOf(purchase, transaction);
+        // Pago ya cobrado: no se revalidan las tandas (solo el cupo), la compra se hizo con la tanda activa
         if (lateApproval && (await reserveItems(items, transaction))) {
           outcome = { id: purchase.id, eventId: purchase.eventId };
           return "paid_without_stock";

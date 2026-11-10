@@ -75,11 +75,11 @@ async function viewEvents() {
           <div class="ev-admin-body">
           <h3>${esc(e.title)} <span class="tag ${e.status === 'published' ? 'completed' : 'failed'}">${eventStatus[e.status]}</span>${e.unlisted ? ' <span class="tag">No listado</span>' : ''}${ageOf(e) ? ` <span class="tag">+${ageOf(e)}</span>` : ''}</h3>
           <div class="ev-meta"><div class="ev-date">📅 ${new Date(e.date).toLocaleString('es-AR')}</div><div class="ev-place">📍 ${esc(e.location)}</div></div>
-          <div class="lots">${e.lots.map(l => `
+          <div class="lots">${e.lots.filter(l => !l.locked && l.ticketsAvailable > 0).map(l => `
             <div class="lot ${l.ticketsAvailable < 1 ? 'sold' : ''}">
               <b>${esc(l.name)}</b>
               <span class="muted">${l.quantity - l.ticketsAvailable}/${l.quantity} · ${money(l.price)}
-                ${l.ticketsAvailable < 1 ? '<span class="tag soldout">Agotada</span>' : ''}</span>
+                ${lotTags(l)}</span>
             </div>`).join('')}</div>
           <div class="muted">${e.ticketsAvailable} disponibles${stats[i] ? ` · ${stats[i].total} vendidas · ${stats[i].admitted} ingresaron` : ''}</div>
           <p class="ev-actions"><button onclick="go('buyers','${e.id}')">Compradores</button>
@@ -96,8 +96,24 @@ async function viewEvents() {
 // datetime-local trabaja con la hora local sin zona: "2026-11-07T23:00"
 const toLocalInput = (d) => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 16); };
 
+const tierHelp = '<p class="muted tier-help">Cada lote se vende a la vez que los demás o se activa cuando se agota el de arriba en la lista. El primer lote siempre se vende a la vez.</p>';
+// Etiquetas de un lote: estado (En venta / Próximamente / Agotada) y, si espera a la anterior, un aviso discreto
+function lotTags(l) {
+  const state = l.ticketsAvailable < 1 ? '<span class="tag soldout">Agotada</span>'
+    : l.locked ? '<span class="tag soon">Próximamente</span>'
+    : '<span class="tag onsale">En venta</span>';
+  return state + (l.afterPrevious ? ' <span class="tier-wait">Espera a la anterior</span>' : '');
+}
+// Selector de modo por lote; el primero (sin anterior) queda fijo en «a la vez»
+const tierValue = v => v === true || v === 'true';
+const tierField = (id, afterPrevious, cls = '', first = false) => {
+  const on = !first && !!afterPrevious;
+  return `<div class="grow"><label>Cómo se vende</label><select ${id ? `id="${id}"` : ''} class="${cls}" ${first ? 'disabled' : ''}><option value="false" ${on ? '' : 'selected'}>Se vende a la vez</option><option value="true" ${on ? 'selected' : ''}>Se activa cuando se agote la anterior</option></select></div>`;
+};
+
 const lotNamesList = '<datalist id="lotNames"><option value="EARLY"><option value="VIP"><option value="General"><option value="Jugador"></datalist>';
 
+let currentLotIds = [];
 async function viewEdit(id) {
   let e = { title: '', description: '', location: '', status: 'published', lots: [] };
   if (id) {
@@ -108,6 +124,7 @@ async function viewEdit(id) {
   let organizers = [];
   try { ({ users: organizers } = await api('/users', { auth: true })); organizers = organizers.filter(u => u.role === 'organizer'); } catch { /* sin lista: el selector queda vacío */ }
 
+  currentLotIds = e.lots.map(l => l.id);
   coverData = undefined; // sin tocar: el evento conserva su portada
   const eventFields = `
       <label>Portada</label>
@@ -153,6 +170,7 @@ async function viewEdit(id) {
         ${eventFields}
         <h3 style="margin-bottom:0">Tipos de entrada</h3>
         <p class="muted" style="margin-top:4px">Cada lote tiene su precio y su cantidad. Después los podés editar o agotar.</p>
+        ${tierHelp}
         ${lotNamesList}
         <div id="lotRows"></div>
         <p><button type="button" class="ghost" onclick="addLotRow()">+ Agregar lote</button></p>
@@ -174,7 +192,9 @@ async function viewEdit(id) {
 
     <h3>Tipos de entrada</h3>
     <p class="muted">Cambiar el precio o el nombre solo afecta las compras nuevas. “Vendidas” incluye las reservadas por compras que todavía no se pagaron.</p>
-    ${e.lots.map(l => {
+    ${tierHelp}
+    <p class="muted">Con las flechas ↑ ↓ cambiás el orden de los lotes: «la anterior» es el lote de arriba.</p>
+    ${e.lots.map((l, i) => {
       const sold = l.quantity - l.ticketsAvailable;
       return `
       <div class="card" style="margin-bottom:10px">
@@ -182,9 +202,14 @@ async function viewEdit(id) {
           <div class="grow"><label>Lote</label><input id="lName_${l.id}" value="${esc(l.name)}" maxlength="60"></div>
           <div><label>Precio</label><input id="lPrice_${l.id}" type="number" min="0" step="0.01" value="${Number(l.price)}"></div>
           <div><label>Cantidad asignada</label><input id="lQty_${l.id}" type="number" min="${sold}" step="1" value="${l.quantity}"></div>
+          <div class="fit lot-move">
+            <button type="button" class="ghost" title="Subir" aria-label="Subir" ${i === 0 ? 'disabled' : ''} onclick="moveLot('${e.id}','${l.id}',-1)">↑</button>
+            <button type="button" class="ghost" title="Bajar" aria-label="Bajar" ${i === e.lots.length - 1 ? 'disabled' : ''} onclick="moveLot('${e.id}','${l.id}',1)">↓</button>
+          </div>
         </div>
+        <div class="row lotrow">${tierField('lTier_' + l.id, l.afterPrevious, 'lTierEdit', i === 0)}</div>
         <p class="muted" style="margin:6px 0">Vendidas: <b>${sold}</b> · Disponibles: <b>${l.ticketsAvailable}</b>
-          ${l.ticketsAvailable < 1 ? '<span class="tag soldout">Agotada</span>' : ''}</p>
+          ${lotTags(l)}</p>
         <button type="button" onclick="saveLot('${e.id}','${l.id}')">Guardar lote</button>
         <button type="button" class="ghost" ${l.ticketsAvailable < 1 ? 'disabled' : ''} onclick="soldOutLot('${e.id}','${l.id}')">Agotar</button>
         <button type="button" class="ghost danger" ${sold > 0 || e.lots.length < 2 ? 'disabled' : ''}
@@ -201,6 +226,8 @@ async function viewEdit(id) {
         <div><label>Precio</label><input id="nPrice" type="number" min="0" step="0.01"></div>
         <div><label>Cantidad</label><input id="nQty" type="number" min="1" step="1"></div>
       </div>
+      <div class="row lotrow">${tierField('nTier', false, '', e.lots.length === 0)}</div>
+      <p class="muted" style="margin:0 0 8px">El lote nuevo queda al final de la lista.</p>
       <button type="button" onclick="addLotBtn('${e.id}')">Agregar lote</button>
     </div>
 
@@ -250,12 +277,37 @@ function addLotRow(name = '') {
     <div class="grow"><label>Lote</label><input class="lName" list="lotNames" value="${esc(name)}" placeholder="EARLY, VIP…" required maxlength="60"></div>
     <div><label>Precio</label><input class="lPrice" type="number" min="0" step="0.01" required></div>
     <div><label>Cantidad</label><input class="lQty" type="number" min="1" step="1" required></div>
-    <div class="fit"><button type="button" class="ghost danger" title="Quitar" onclick="removeLotRow(this)">✕</button></div>`;
+    ${tierField('', false, 'lTier')}
+    <div class="fit lot-move">
+      <button type="button" class="ghost lot-up" title="Subir" aria-label="Subir" onclick="moveLotRow(this, -1)">↑</button>
+      <button type="button" class="ghost lot-down" title="Bajar" aria-label="Bajar" onclick="moveLotRow(this, 1)">↓</button>
+      <button type="button" class="ghost danger" title="Quitar" onclick="removeLotRow(this)">✕</button>
+    </div>`;
   $('lotRows').appendChild(row);
+  syncRowArrows();
+}
+// En el alta el orden es el del formulario: se mueven las filas, sin llamar a la API
+function syncRowArrows() {
+  const rows = [...document.querySelectorAll('#lotRows .lotrow')];
+  rows.forEach((r, i) => {
+    r.querySelector('.lot-up').disabled = i === 0;
+    r.querySelector('.lot-down').disabled = i === rows.length - 1;
+    // El primero no tiene anterior: queda fijo en «a la vez»
+    const sel = r.querySelector('.lTier');
+    if (sel) { if (i === 0) sel.value = 'false'; sel.disabled = i === 0; }
+  });
+}
+function moveLotRow(btn, dir) {
+  const row = btn.closest('.lotrow');
+  const other = dir < 0 ? row.previousElementSibling : row.nextElementSibling;
+  if (!other) return;
+  if (dir < 0) row.parentNode.insertBefore(row, other); else row.parentNode.insertBefore(other, row);
+  syncRowArrows();
 }
 function removeLotRow(btn) {
   if (document.querySelectorAll('#lotRows .lotrow').length < 2) return flash('El evento necesita al menos un lote', 'err');
   btn.closest('.lotrow').remove();
+  syncRowArrows();
 }
 
 // ---------- Portada (drag & drop) ----------
@@ -327,6 +379,7 @@ async function submitEvent(ev, id) {
       name: r.querySelector('.lName').value.trim(),
       price: Number(r.querySelector('.lPrice').value),
       quantity: Number(r.querySelector('.lQty').value),
+      afterPrevious: tierValue(r.querySelector('.lTier').value),
     }));
   }
   try {
@@ -340,6 +393,7 @@ async function saveLot(eventId, lotId) {
   try {
     await api(`/events/${eventId}/lots/${lotId}`, { method: 'PUT', auth: true, body: {
       name: $('lName_' + lotId).value, price: Number($('lPrice_' + lotId).value), quantity: Number($('lQty_' + lotId).value),
+      afterPrevious: tierValue($('lTier_' + lotId).value),
     }});
     await viewEdit(eventId);
     flash('Lote actualizado');
@@ -371,6 +425,22 @@ async function deletePackBtn(eventId, packId) {
     flash('Pack eliminado');
   } catch (err) { flash(err.message, 'err'); }
 }
+// Cambia el orden de un lote en el evento: manda TODOS los ids en el orden nuevo
+let orderSaving = false;
+async function moveLot(eventId, lotId, dir) {
+  if (orderSaving) return;
+  const ids = currentLotIds.slice();
+  const i = ids.indexOf(lotId), j = i + dir;
+  if (i < 0 || j < 0 || j >= ids.length) return;
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  orderSaving = true;
+  document.querySelectorAll('.lot-move button').forEach(b => { b.disabled = true; });
+  try {
+    await api(`/events/${eventId}/lots-order`, { method: 'PUT', auth: true, body: { order: ids } });
+    await viewEdit(eventId);
+  } catch (err) { flash(err.message, 'err'); await viewEdit(eventId); }
+  finally { orderSaving = false; }
+}
 async function soldOutLot(eventId, lotId) {
   if (!confirm('¿Agotar este lote? Nadie podrá comprarlo hasta que vuelvas a subir la cantidad.')) return;
   try {
@@ -392,6 +462,7 @@ async function addLotBtn(eventId) {
     if ($('nPrice').value === '') throw new Error('Completá el precio del lote');
     await api(`/events/${eventId}/lots`, { method: 'POST', auth: true, body: {
       name: $('nName').value, price: Number($('nPrice').value), quantity: Number($('nQty').value),
+      afterPrevious: tierValue($('nTier').value),
     }});
     await viewEdit(eventId);
     flash('Lote agregado');

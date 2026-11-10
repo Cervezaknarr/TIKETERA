@@ -88,3 +88,11 @@ body.panel .site-foot b { font-weight:600; color:var(--text); }
   body.panel .ev-admin { gap:10px; padding:12px; }
   body.panel .ev-admin-body h3 { font-size:17px; }
 }
+
+/* Tandas de entradas: etiquetas de estado y botones de orden */
+body.panel .tag.onsale { color:var(--ok); border-color:var(--ok); font-family:inherit; margin:0; }
+body.panel .tag.soon { color:var(--muted); border-style:dashed; font-family:inherit; margin:0; }
+body.panel .tier-wait { color:var(--muted); font-size:.85em; font-style:italic; }
+body.panel .tier-help { margin:4px 0 12px; }
+body.panel .lot-move { display:flex; gap:4px; }
+body.panel .lot-move button { padding-left:10px; padding-right:10px; }

@@ -5,6 +5,8 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // Edad mínima de un evento (null si no tiene). Los eventos viejos con adultsOnly sin minAge valen 18.
 const ageOf = (e) => e.minAge || (e.adultsOnly ? 18 : null);
+// Un lote es comprable si tiene cupo y no es una tanda bloqueada (locked ausente = no bloqueado)
+const lotBuyable = (l) => !l.locked && l.ticketsAvailable > 0;
 const money = (n) => '$' + Number(n).toLocaleString('es-AR');
 
 function flash(text, type = 'ok') {
@@ -86,7 +88,7 @@ async function api(path, { method = 'GET', body, auth = false } = {}) {
   catch { throw new Error('No se pudo conectar con el servidor'); }
   const data = await res.json().catch(() => ({}));
   if (auth && res.status === 401) onUnauthorized();
-  if (!res.ok || data.success === false) throw new Error(data.message || 'Error ' + res.status);
+  if (!res.ok || data.success === false) throw Object.assign(new Error(data.message || 'Error ' + res.status), { code: data.code });
   return data;
 }
 

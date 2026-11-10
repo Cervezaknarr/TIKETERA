@@ -15,6 +15,7 @@ Plataforma de venta de entradas para eventos con QR y control de acceso.
 - **Ramas viejas** que se conservan: `integracionPagos` (el usuario pidió no borrarla), `haciendoLotes`, `integracion-staff-lotes`, `staff-admin-roles`, `agregandoModo`.
 - **Pendientes del usuario en Render:** reactivar la tarjeta (estaba pausada) antes del cobro mensual; borrar `ADMIN_PASSWORD` (ya entró a `/admin`); `DB_SYNC_ALTER=false` cuando la estructura de la base esté estable (antes de abrir ventas).
 - **Email de entradas (Resend), decisión del usuario 2026-11-04:** el mail va a estar configurado el 2026-11-05 y **no habrá ventas reales sin mail**. Pendientes del usuario: cargar `RESEND_API_KEY` en Render y verificar en Resend que el dominio de `RESEND_FROM` esté verificado (si no lo está, los mails no salen aunque la clave sea válida). Mientras no haya clave, el link a las entradas (con `accessToken`) se escribe en el log del servidor; el endurecimiento H-04 lo deja solo para desarrollo/tests y en producción enmascara el email y no escribe el link (ver `PLAN.md`).
+- **Tandas de entradas (2026-11-10):** implementadas en el árbol de `main`, sin commit y sin desplegar. Falta la prueba en navegador y en Postgres, y la aprobación del usuario para TT.03. Ver la sección del 2026-11-10 al final.
 - **Pendientes técnicos principales:** modo sin conexión del escáner y probarlo en celulares reales (Alva); verificar `trust proxy` y el límite por IP en Render; prueba de carga; pasar Mercado Pago a credenciales de producción; limpiar los índices duplicados viejos de Postgres.
 - **Estado de despliegue:** los commits de la URL por evento `/e/<slug>`, portada, página de compra con mapa y panel de admin rediseñado ya están en `prod` (ver la sección del 2026-11-04). Lo único pendiente de desplegar son las tres columnas nuevas de `main` (`Event.unlisted`, `Event.mapQuery`, `Purchase.courtesy`): requieren `DB_SYNC_ALTER` sin definir o en `true` (ver la nota de despliegue de la sección 2026-11-05/06).
 - **Fallos conocidos de esos commits, el usuario decidió dejarlos para más adelante:**
@@ -314,3 +315,28 @@ Hecho en una sola tanda con el dueño, antes de la venta real del evento «7D/6D
 **Descartado a propósito** (el dueño prefirió no hacerlo): ocultar eventos con una marca en la descripción (`[oculto]`) o con una lista de slugs en el frontend; ocultar lotes solo en el frontend. Si alguien lo propone de nuevo, ya existe el campo `unlisted`.
 
 **Tests:** 277 pasan, 0 fallan (`cd backend && PURCHASE_HOLD_MINUTES= npm test`, verificado el 2026-11-06).
+
+### Tandas de entradas (2026-11-10, árbol de `main`, sin commit y sin desplegar) [CUPO Y PRECIOS: cambia qué se puede vender]
+- **Qué es:** un lote puede esperar a que se agote el de arriba. Modelo y ejemplo en `CLAUDE.md` (Arquitectura). Diseño en `PLAN.md` («Tandas de entradas secuenciales»); tareas TT.01 a TT.11 en `TAREAS.md`.
+- **Estado:**
+  - Hecho con tests: columna `Lot.afterPrevious`, `utils/tiers.js`, `locked` en la API, 409 `LOT_LOCKED` en el checkout, reorden de lotes y alta/edición con el modo.
+  - Hecho en la página pública y en `/adminGt`, pero **sin probar en el navegador**: `uiTiers.test.js` y `uiTiersAdmin.test.js` solo revisan el texto y la estructura del código.
+  - Pendiente: TT.08 (recorrido visual y concurrencia en Postgres). TT.03 (el checkout que rechaza tandas cerradas) espera la aprobación del usuario.
+- **Tests:** el conteo estático de `test(`/`it(` en `backend/test/` da 325 (34 archivos). La última corrida completa registrada fue 324/324, antes de agregar el test de `uiTiers.test.js`. Falta confirmarlo con una corrida de `npm test`.
+- **Decisiones:**
+  - **Dos modos por lote, no un «grupo» de texto libre.** El campo `tierGroup` de la primera versión (TT.01 a TT.04) se reemplazó antes de cualquier deploy: la cadena la define el orden del evento, sin nombres que haya que escribir igual en cada lote.
+  - **Estado en vivo.** El bloqueo se calcula al consultar, sin guardarlo. Así no queda desfasado con el cupo, pero una tanda que recupera cupo vuelve a cerrar las siguientes, y una compra ya hecha no se revierte.
+  - **El checkout bloquea todos los lotes del evento** cuando tiene alguna tanda, en orden de id (sin deadlocks entre carritos), y evalúa la regla dentro de la transacción.
+  - **La aprobación tardía no revalida tandas.** El cobro ya se hizo: solo se reserva cupo. Puede emitir entradas de una tanda que cerró después de la compra, si su lote todavía tiene cupo.
+  - **Los packs siguen a su lote**, no a la cadena.
+  - **`afterPrevious` solo lo ve el admin**; el público ve `locked`.
+- **Nota de despliegue:**
+  - `Lot.afterPrevious` es una **columna nueva** (boolean, por defecto `false`: los lotes existentes quedan «a la vez», sin cambio de comportamiento). El deploy necesita `DB_SYNC_ALTER` sin definir o en `true`; con `false` el arranque se rompe (`server.js` usa `alter: DB_SYNC_ALTER !== "false"`). Después del deploy, poner `DB_SYNC_ALTER=false` en Render. En Postgres, repetir `alter` duplica índices: no dejarlo en `true`.
+  - Va en el mismo deploy que las columnas pendientes de `main`. Según la última nota de «Estado de despliegue», son `Event.unlisted`, `Event.mapQuery` y `Purchase.courtesy` (sección 2026-11-05/06). Las secciones de carrito, packs, staff por evento, recuperación de entradas y endurecimiento (`AuditLog`) también dicen «sin desplegar», y ese estado no las menciona: confirmar con el dueño cuáles ya están en `prod` antes de subir.
+  - `tierGroup` nunca llegó a un deploy (los cambios siguen sin commit), así que no hay nada que migrar.
+  - Antes de desplegar, copia de la base de Render, como en los deploys anteriores.
+- **Pendientes honestos:**
+  1. La concurrencia real en Postgres no está probada: SQLite ignora `FOR UPDATE`. El bloqueo de la cadena, la ausencia de deadlocks y el cupo exacto con compras simultáneas quedan por probar (TT.08, opcional pero recomendado).
+  2. La prueba visual en el navegador está pendiente: checklist de TT.08 en `TAREAS.md` (gris y «Próximamente», sin selector, etiquetas y ↑/↓ del admin, recarga tras el 409).
+  3. TT.03 (checkout) espera la aprobación del usuario, porque cambia qué se puede vender.
+  4. La rama 404 de la reserva (lote borrado en plena compra) no tiene test automático (TT.10).

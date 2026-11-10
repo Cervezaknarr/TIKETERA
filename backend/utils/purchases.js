@@ -8,6 +8,8 @@ const { holdMinutes } = require("./paymentWindow");
 
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
+const byLotId = (a, b) => (a.lotId < b.lotId ? -1 : a.lotId > b.lotId ? 1 : 0);
+
 /**
  * Líneas de una compra: { lotId, lotName, unitPrice, quantity }. Las compras
  * anteriores a los carritos no tienen líneas: su lote vive en la propia compra
@@ -35,7 +37,9 @@ const itemsOf = async (purchase, transaction) => {
  * Devolver las entradas de una compra al cupo de sus lotes
  */
 const releaseStock = async (purchase, transaction) => {
-  for (const item of await itemsOf(purchase, transaction)) {
+  // Orden por lotId: bloqueos en orden consistente entre transacciones (anti-deadlock)
+  const items = [...(await itemsOf(purchase, transaction))].sort(byLotId);
+  for (const item of items) {
     await Lot.increment("ticketsAvailable", {
       by: item.quantity,
       where: { id: item.lotId },
@@ -70,7 +74,8 @@ const reserveStock = async (lotId, quantity, transaction) => {
  */
 const reserveItems = async (items, transaction) => {
   const reserved = [];
-  for (const item of items) {
+  // Orden por lotId: bloqueos en orden consistente entre transacciones (anti-deadlock)
+  for (const item of [...items].sort(byLotId)) {
     if (!(await reserveStock(item.lotId, item.quantity, transaction))) {
       for (const done of reserved) {
         await Lot.increment("ticketsAvailable", {

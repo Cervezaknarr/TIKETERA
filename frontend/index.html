@@ -43,7 +43,7 @@ const fmtWhen = d => new Date(d).toLocaleString('es-AR', { weekday: 'long', day:
 // ---------- Eventos ----------
 // Tarjeta del listado: portada (o la fecha como póster), título, fecha y lugar, y desde qué precio
 function eventCard(e) {
-  const free = e.lots.filter(l => l.ticketsAvailable > 0).map(l => Number(l.price));
+  const free = e.lots.filter(lotBuyable).map(l => Number(l.price));
   const soldOut = !free.length;
   const min = Math.min(...free);
   const price = soldOut ? '' : (free.some(p => p !== min) ? 'Desde ' : '') + money(min);
@@ -131,16 +131,28 @@ async function viewBuy(id) {
   // El admin puede pausar las ventas (por ejemplo al cambiar la cuenta de cobro)
   const paused = e.salesPaused || await api('/purchases/status').then(r => r.salesPaused).catch(() => false);
   // Si el evento cambió mientras tanto, la selección se ajusta a lo que hay
-  for (const l of e.lots) cart[l.id] = paused ? 0 : Math.min(cart[l.id] || 0, l.ticketsAvailable, MAX_PER_PURCHASE);
+  for (const l of e.lots) cart[l.id] = paused || l.locked ? 0 : Math.min(cart[l.id] || 0, l.ticketsAvailable, MAX_PER_PURCHASE);
   const packs = e.packs || [];
   for (const p of packs) {
     const lot = e.lots.find(l => l.id === p.lotId);
-    const fits = !paused && lot && lot.ticketsAvailable >= p.quantity * (packCart[p.id] || 0) + (cart[p.lotId] || 0);
+    const fits = !paused && lot && !lot.locked && lot.ticketsAvailable >= p.quantity * (packCart[p.id] || 0) + (cart[p.lotId] || 0);
     if (!fits || p.quantity * (packCart[p.id] || 0) > MAX_PER_PURCHASE) packCart[p.id] = 0;
   }
+  // Se descartan lotes/paquetes que ya no existen en el evento
+  for (const k of Object.keys(cart)) if (!e.lots.some(l => l.id === k)) delete cart[k];
+  for (const k of Object.keys(packCart)) if (!packs.some(p => p.id === k)) delete packCart[k];
   document.title = e.title;
   const when = fmtWhen(e.date);
+  const soonTag = '<span class="ev-soon">Próximamente</span>';
   const lotCard = l => {
+    if (l.locked) return `
+      <div class="ev-lot locked" aria-disabled="true">
+        <span class="ev-lot-info">
+          <span class="ev-lot-name">${esc(l.name)}</span>
+          <span class="ev-lot-price">${money(l.price)}</span>
+          ${soonTag}
+        </span>
+      </div>`;
     const max = paused ? 0 : Math.min(l.ticketsAvailable, MAX_PER_PURCHASE);
     return `
       <div class="ev-lot ${max < 1 ? 'sold' : ''} ${cart[l.id] > 0 ? 'on' : ''}">
@@ -159,6 +171,13 @@ async function viewBuy(id) {
   const packCard = p => {
     const lot = e.lots.find(l => l.id === p.lotId);
     if (!lot) return '';
+    if (lot.locked) return `
+      <div class="ev-lot ev-pack locked" aria-disabled="true">
+        <span class="ev-lot-info">
+          <span class="ev-lot-name">${esc(`Pack x${p.quantity} ${lot.name}`)} <span class="tag">−${pctText(p.discountPercent)}%</span></span>
+          ${soonTag}
+        </span>
+      </div>`;
     const ok = !paused && p.quantity <= MAX_PER_PURCHASE && lot.ticketsAvailable >= p.quantity;
     const unit = packUnit(lot, p), label = `Pack x${p.quantity} ${lot.name}`;
     return `
@@ -167,7 +186,7 @@ async function viewBuy(id) {
           <span class="ev-lot-name">${esc(label)} <span class="tag">−${pctText(p.discountPercent)}%</span></span>
           <span class="ev-lot-price">${ok
             ? `${money(unit * p.quantity)} <s>${money(lot.price * p.quantity)}</s> · ${money(unit)} c/u`
-            : '<span class="ev-soldtag">No disponible</span>'}</span>
+            : `<span class="ev-soldtag">${lot.ticketsAvailable < 1 ? 'Agotado' : 'No disponible'}</span>`}</span>
         </span>
         ${ok ? `<span class="ev-lot-qty"><span>Packs</span>
           <span class="ev-stepper" data-pack="${p.id}">
@@ -177,7 +196,7 @@ async function viewBuy(id) {
           </span></span>` : ''}
       </div>`;
   };
-  const anyFree = e.lots.some(l => l.ticketsAvailable > 0);
+  const anyFree = e.lots.some(lotBuyable);
   $('view').innerHTML = `
   <div class="ev-hero ${e.imageUrl ? '' : 'no-cover'}">${e.imageUrl ? `<img src="${esc(e.imageUrl)}" alt="Portada de ${esc(e.title)}">` : datePoster(e.date)}</div>
   <div class="ev-layout with-map">
@@ -211,6 +230,7 @@ async function viewBuy(id) {
 // Cambiar la cantidad de un tipo de entrada, respetando el máximo por compra
 function stepQty(lotId, delta) {
   const lot = currentEvent.lots.find(l => l.id === lotId);
+  if (lot.locked) return;
   const before = cart[lotId] || 0;
   const next = before + delta;
   if (next < 0 || next > Math.min(lot.ticketsAvailable, MAX_PER_PURCHASE)) return;
@@ -226,6 +246,7 @@ function stepQty(lotId, delta) {
 function stepPack(packId, delta) {
   const pack = currentEvent.packs.find(p => p.id === packId);
   const lot = currentEvent.lots.find(l => l.id === pack.lotId);
+  if (lot.locked) return;
   const before = packCart[packId] || 0;
   const next = before + delta;
   if (next < 0) return;
@@ -386,6 +407,13 @@ async function submitBuy(ev) {
     flash('¡Compra realizada! Estas son tus entradas.');
   } catch (err) {
     if ($('bFinish')) $('bFinish').disabled = false;
+    // La tanda se cerró para esa compra: se recarga el evento con lo que hay ahora
+    // viewBuy pone en 0 lo bloqueado y conserva el resto de la selección
+    if (err.code === 'LOT_LOCKED') {
+      clearInterval(checkoutTimer);
+      history.replaceState(null, '', location.pathname);
+      await viewBuy(eventSlug);
+    }
     flash(err.message, 'err');
   }
 }

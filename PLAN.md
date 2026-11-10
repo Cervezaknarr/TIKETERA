@@ -282,3 +282,147 @@ evidencia (captura o export con fecha) en el lugar que indica `docs/evidencias/R
   (incluidos los plazos de retención de datos de compradores).
 - **M-13** Mercado Pago: cargar el secreto de firma de webhooks de cada aplicación (T2.11) y verificar que
   el `collector_id` mostrado en el panel coincide con la cuenta esperada.
+
+---
+
+# PLAN — Tandas de entradas secuenciales (2026-11-10)
+
+Tareas: `TAREAS.md` > «Tandas de entradas (TT.xx)». Independiente del plan de endurecimiento de arriba.
+
+## T-1. Objetivo
+El admin carga por adelantado las tandas siguientes de un tipo de entrada (p. ej. «General 1.ª tanda»
+$10.000, «2.ª tanda» $13.000, «3.ª tanda» $16.000). En `/` y `/e/<slug>` se **ven** todas, pero solo la
+tanda actual es comprable; las siguientes aparecen en gris, sin selector de cantidad, con la etiqueta
+«Próximamente». Cuando la tanda actual se agota, la siguiente se habilita sola, sin intervención del admin.
+Los eventos existentes y los tipos de entrada paralelos (VIP / General) no cambian.
+
+## T-2. Modelo de datos
+> **REDISEÑO (TT.11, 2026-11-10):** `Lot.tierGroup` (texto libre) fue **reemplazado** por `Lot.afterPrevious`.
+> La funcionalidad no estaba en producción: sin compatibilidad hacia atrás. Lo que sigue describe el modelo vigente.
+
+- **Una columna nueva: `Lot.afterPrevious`** (`BOOLEAN`, `allowNull: false`, `defaultValue: false`). Cada lote
+  tiene solo DOS modos:
+  - `false` = **a la vez** (en paralelo): se vende normalmente junto a los demás (comportamiento actual).
+  - `true` = **se activa después de que se agote el anterior** (el lote inmediatamente anterior por `position`).
+- **Cadena:** empieza en un lote con `afterPrevious = false` (la «cabeza») y la forman los lotes consecutivos
+  siguientes con `afterPrevious = true`, hasta el siguiente lote con `false` o el final. Un lote paralelo en
+  medio abre una cadena nueva. Puede haber varias cadenas por evento. El primer lote del evento con `true` se
+  trata como cabeza (no puede esperar a nada).
+- **El orden es `Lot.position`, que ya existe** (`withLots` ordena por `position, createdAt`). Desempate:
+  `createdAt`, `id`. Reordenar con `lots-order` puede cambiar qué lotes forman cadena (se calcula en vivo).
+- **Sin estado almacenado** («activa/bloqueada»): se calcula en vivo (ver T-3). Los lotes existentes quedan con
+  `afterPrevious = false`. `migrateLots` no cambia. Sin índice nuevo.
+- **Despliegue:** columna nueva → el deploy necesita `DB_SYNC_ALTER` sin definir o en `true` (con `false`
+  el arranque se rompe); después se vuelve a `false`.
+
+## T-3. Regla de activación (única fuente: `utils/tiers.js`, función pura)
+`lockedLotIds(lots)` → `Set` de ids bloqueados. Dentro de cada evento se ordenan los lotes por
+`position, createdAt, id`; **un lote con `afterPrevious = true` está bloqueado si algún lote ANTERIOR de su
+misma cadena (cabeza incluida) tiene `ticketsAvailable > 0`.** Los lotes con `afterPrevious = false` nunca
+están bloqueados; el primer lote del evento se trata siempre como cabeza.
+
+Consecuencias (todas deseadas y a testear):
+- En cada cadena hay como mucho **una** tanda comprable: la primera con cupo. Si todas están en 0, la
+  cadena está agotada.
+- **Calculada en vivo, sin estado:** si una tanda agotada recupera cupo (el barrido libera una compra
+  vencida, el admin sube la cantidad), esa tanda vuelve a ser la actual y **la siguiente se vuelve a
+  bloquear** hasta que la anterior se agote otra vez. Se vende siempre la tanda más barata/antigua que
+  tenga cupo; no queda cupo anterior «huérfano». Las compras pendientes o pagas de la tanda siguiente
+  hechas mientras estuvo activa no se tocan.
+- «Agotar» del panel (`soldOut: true`) pone `ticketsAvailable = 0` → es la forma manual de **adelantar**
+  a la tanda siguiente. Poner `quantity` igual a lo vendido tiene el mismo efecto.
+- Una tanda con `quantity = 0` cuenta como agotada (se saltea).
+- Borrar una tanda (solo posible sin compras) acorta la cadena; reordenar cambia cuál es la actual en el
+  momento.
+- Compras `pending` retienen cupo: con la tanda 1 en 0 por pendientes, se habilita la tanda 2; si las
+  pendientes vencen, la 1 vuelve a ser la actual. Es el mismo criterio que «Agotada» hoy.
+
+## T-4. Validación en el servidor (checkout)
+En `purchaseController.createCheckoutSession`, **dentro de la transacción** de reserva:
+1. **Qué se bloquea:** una consulta liviana cuenta los lotes del evento con `afterPrevious = true`. Si no hay
+   ninguno, se bloquean solo los lotes pedidos (como siempre). Si hay, se bloquean **TODOS los lotes del
+   evento**, en un único conjunto ordenado por id (anti-deadlock). Las filas se re-verifican dentro de la
+   transacción (si aparece un lote encadenado entre la consulta y el bloqueo, se bloquea todo el evento).
+2. Con las filas bloqueadas (valores frescos) se calcula `lockedLotIds`. Si algún lote pedido (suelto o por
+   pack) está bloqueado → la transacción termina sin reservar y responde
+   **409** `{ success: false, code: "LOT_LOCKED", message: "La tanda «<nombre>» todavía no está a la venta. Actualizá la página y elegí de nuevo" }`.
+   Es lo primero que se chequea tras bloquear, antes de los topes por email/lote y de `reserveItems`.
+3. **Se evalúa contra el estado anterior a la compra** (no hay desborde automático): si a la tanda 1 le
+   quedan 2 y el carrito pide 2 de la tanda 1 + 3 de la 2, se rechaza la 2 con 409. Si pide 5 de la 1,
+   responde el «Solo quedan 2…» de siempre. El comprador compra las 2 y luego la siguiente.
+4. Carritos con lotes de cadenas distintas o con lotes paralelos: cada lote se evalúa en su cadena; basta
+   uno bloqueado para rechazar todo (la reserva ya es todo o nada).
+5. **No se aplica a la aprobación tardía** (webhook de un pago aprobado tras vencer, `reserveItems` en
+   ~l. 604): el comprador ya pagó el precio de esa tanda cuando estaba activa; solo se exige cupo, como hoy.
+   Tampoco cambian `releaseStock`, el barrido, las cortesías (no usan lotes) ni las devoluciones.
+6. Nunca se confía en el cliente: el flag `locked` que expone la API es solo para pintar; el servidor
+   recalcula siempre.
+
+## T-5. API
+- **Pública (`withLots`, `GET /api/events` y `/api/events/:id`):** cada lote suma `locked: boolean`
+  calculado con `lockedLotIds`. `afterPrevious` se **quita** para no-admin (público, staff, organizador).
+  `ticketsAvailable` y `price` de una tanda bloqueada se siguen enviando. `Event.ticketsAvailable` no cambia.
+- **Admin:** recibe `afterPrevious` y `locked` en cada lote.
+- **Escritura (solo admin, rutas actuales `protect, admin`; sin cambios de permisos):**
+  - `parseLotInput` acepta `afterPrevious`: debe ser **boolean** (si viene y no lo es → 400
+    «afterPrevious tiene que ser verdadero o falso»; `null` también es 400). Ausente en el alta = `false`;
+    ausente en la edición = no se toca. Lo usan `POST /api/events` (cada elemento de `lots`),
+    `POST /api/events/:eventId/lots` y `PUT /api/events/:eventId/lots/:lotId`. La respuesta de esas rutas
+    (lote / evento admin) incluye `afterPrevious`.
+  - **`PUT /api/events/:eventId/lots-order`** `{ order: [...] }`: reordena en una transacción
+    (`position` = índice). Exige exactamente todos los lotes del evento, sin repetidos; si no → 400.
+    Auditoría `LOT_REORDER` (no estricta). `LOT_CREATE`/`LOT_DELETE` incluyen `afterPrevious` y
+    `LOT_UPDATE` registra el cambio como `afterPrevious: { from, to }`.
+  - Checkout: sin cambios de contrato; 409 `{ success:false, code:"LOT_LOCKED", message }` como antes.
+- El organizador no edita lotes (hoy tampoco): sin cambios en `/api/organizer/*` ni en `/organizadorGt`.
+
+## T-6. Interfaz
+**Pública (`frontend/index.html`, `event.css`, `common.js`):**
+- Tanda bloqueada: tarjeta `.ev-lot.locked` en gris (misma base visual que `.sold`), nombre y precio
+  atenuados, etiqueta «Próximamente» y línea chica «Se habilita al agotarse la tanda anterior». Sin
+  stepper; en el carrito se fuerza a 0 (igual que hoy con el cupo).
+- Packs de un lote bloqueado: misma tarjeta gris con «Próximamente», sin stepper.
+- Tanda agotada: «Agotada» como hoy. Orden: el de la API (`position`).
+- Listado `/`: «Desde $…» y «Agotado» solo consideran lotes con cupo **y** `locked = false`.
+- Ante un 409 `LOT_LOCKED` en el checkout: mensaje del servidor y recarga del evento (`viewBuy`), así se
+  ve la tanda que quedó activa.
+- Helper compartido `lotBuyable(l) = l.ticketsAvailable > 0 && !l.locked` en `common.js` para no repetir
+  la condición en los ~6 lugares que hoy miran `ticketsAvailable`.
+
+**Admin (`frontend/adminGt/index.html`):**
+- En cada lote (crear evento y editar): selector de dos modos, «A la vez» / «Se activa después de que se agote la anterior» (`afterPrevious`), y botones ↑/↓ que llaman a `lots-order` con la lista completa.
+- Etiqueta de estado por lote: «En venta» / «Próximamente» / «Agotada» (desde `locked` y el cupo).
+- Ayuda corta bajo la lista: «Un lote que se activa después de la anterior se habilita cuando se agota el lote de arriba. "Agotar" adelanta al siguiente.»
+- Sin cambios en `/organizadorGt` (solo muestra totales).
+
+## T-7. Estructura (nuevo o modificado)
+```
+backend/models/Lot.js                 + afterPrevious
+backend/utils/tiers.js                NUEVO: lockedLotIds(lots)
+backend/utils/lots.js                 parseLotInput (afterPrevious) y withLots (locked, ocultar afterPrevious)
+backend/controllers/lotController.js  afterPrevious en alta/edición, reorderLots
+backend/controllers/eventController.js afterPrevious en los lotes iniciales
+backend/controllers/purchaseController.js  bloqueo de lotes del evento + 409 LOT_LOCKED en el checkout
+backend/routes/eventRoutes.js         PUT /:eventId/lots-order (protect, admin)
+backend/test/tiersUnit, tiersCheckout, tiersAdmin, tiersApi, uiTiers, uiTiersAdmin .test.js   NUEVOS (+ tiersFixes.test.js)
+frontend/common.js, index.html, event.css, adminGt/index.html
+```
+
+## T-8. Decisiones
+- **DT-1** Opt-in por lote con `afterPrevious` (boolean; antes `tierGroup`, reemplazado en TT.11); false = como hoy. Ningún evento existente cambia.
+- **DT-2** Orden = `position` existente + endpoint de reorden atómico.
+- **DT-3** Activación calculada en vivo, sin estado: una tanda que recupera cupo vuelve a ser la actual y
+  bloquea a las siguientes (pendiente de confirmar por el usuario, ver P-1).
+- **DT-4** Validación dentro de la transacción, con las cadenas bloqueadas en orden por id; 409
+  `LOT_LOCKED`. Sin desborde automático a la tanda siguiente (P-2).
+- **DT-5** La aprobación tardía no revalida tandas.
+- **DT-6** No es `[SEGURIDAD]`: no toca auth, permisos, secretos ni datos personales (las rutas de
+  escritura siguen `protect, admin`). Sí toca qué se puede vender: se cubre con tests del servidor.
+
+## T-9. Riesgos
+| Riesgo | Mitigación |
+|---|---|
+| Concurrencia en el cambio de tanda (SQLite no bloquea filas) | Bloqueo de todos los lotes del evento en la transacción; prueba manual opcional en Postgres local (TT.08). |
+| Admin se confunde con los nombres de grupo | Eliminado en TT.11: solo hay dos modos por lote. |
+| La tanda 2 se vende y después la 1 recupera cupo (la 2 se vuelve a bloquear) | Comportamiento documentado (DT-3); se ve en el panel con la etiqueta de estado. |
+| Columna nueva con `DB_SYNC_ALTER=false` | Nota de despliegue en `MEMORIA.md` (TT.09). |
